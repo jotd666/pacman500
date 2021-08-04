@@ -1,0 +1,56 @@
+{
+"source":"sprites.png",
+"x_offset":2,
+"y_offset":0,
+ "width" : 16,
+ "height" : 16,
+ "horizontal" : true,
+ "objects":[{
+   "name":"pac_left",
+   "frames":2,
+   "start_x":0,
+   "start_y":0
+ },
+ {
+   "name":"red_ghost",
+   "sprite_number":0,
+   "frames":8,
+   "start_x":0,
+   "start_y":64
+  },
+{
+   "name":"frightened_ghost",
+   "sprite_number_disabled":0,
+   "frames":4,
+   "start_x":128,
+   "start_y":64
+  },
+{
+   "name":"pink_ghost",
+   "sprite_number":2,
+   "frames":8,
+   "start_x":0,
+   "start_y":80
+  },
+  {
+   "name":"cyan_ghost",
+   "sprite_number":4,
+   "frames":8,
+   "start_x":0,
+   "start_y":96
+  },
+  {
+   "name":"orange_ghost",
+   "sprite_number":6,
+   "frames":8,
+   "start_x":0,
+   "start_y":112
+  },
+ {
+   "name":"bonus",
+   "frames":8,
+   "start_x":32,
+   "start_y":48
+  }
+ ]
+}
