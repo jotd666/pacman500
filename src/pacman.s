@@ -25,6 +25,7 @@
 	include "lvo/lowlevel.i"
 	include "lvo/graphics.i"
 	
+    include "whdmacros.i"
 
 
 	
@@ -44,11 +45,17 @@ StartList = 38
 Execbase  = 4
 
 NB_LINES = 248
-MAZE_PLANE_SIZE = 28*NB_LINES
+NB_BYTES_PER_LINE = 28
+MAZE_PLANE_SIZE = NB_BYTES_PER_LINE*NB_LINES
 SCREEN_PLANE_SIZE = 40*NB_LINES
 NB_PLANES   = 4
 
 Start:
+    bsr compute_sprite_xy_table
+    bsr compute_collision_table
+
+    
+    
         ; copy maze data in bitplanes
         lea maze_data(pc),a0
         lea screen_data,a1
@@ -107,7 +114,6 @@ MakeCL:
         move.w #0,bpl1mod(a5)                ; modulo de tous les plans = 40
         move.w #0,bpl2mod(a5)
 
-        move.w #$83E0,dmacon(a5)
 
 	
     ; bob test
@@ -122,19 +128,40 @@ MakeCL:
     
     lea  sprites,a0
     lea  red_ghost,a1
-    ;move.l  #0,(a1)     ; TEMP
+    move.w  #$10,d0
+    move.w  #$20,d1
+    ;bsr store_sprite_pos
     move.l  a1,d0
     move.w  d0,(6,a0)
     swap    d0
     move.w  d0,(2,a0)
     addq.l  #8,a0
-    lea  pink_ghost,a1
-    ;move.l  #0,(a1)     ; TEMP
+
+    lea empty_sprite,a1
     move.l  a1,d0
     move.w  d0,(6,a0)
     swap    d0
     move.w  d0,(2,a0)
+    addq.l  #8,a0
+    
+    lea  pink_ghost,a1
+    move.w  #$30,d0
+    move.w  #$40,d1
+    ;bsr store_sprite_pos
+    move.l  a1,d0
+    move.w  d0,(6,a0)
+    swap    d0
+    move.w  d0,(2,a0)
+    addq.l  #8,a0
+    
+    lea empty_sprite,a1
+    move.l  a1,d0
+    move.w  d0,(6,a0)
+    swap    d0
+    move.w  d0,(2,a0)
+    addq.l  #8,a0
 
+    move.w #$83E0,dmacon(a5)
     
 	; now sprite test
 	bsr		mouse
@@ -161,12 +188,6 @@ Fin:
         clr.l d0
         rts                       ; quitter le programme
 
-wait_blit
-	TST.B	$BFE001
-.wait
-	BTST	#6,dmaconr+$DFF000
-	BNE.S	.wait
-	rts
 	
 mouse:	
 	;move.w	#$0F0,$DFF180
@@ -174,9 +195,140 @@ mouse:
 	BNE  mouse
 	rts
 	
+SPRITE_POS:MACRO
+    DC.W ((\2&$FF)<<8)|(((\1-1)&$1FE)>>1)
+	DC.W (((\2+\3)&$FF)<<8)|((\2&$100)>>6)|(((\2+\3)&$100)>>7)|((\1-1)&$1)
+    ENDM
 
-;constante
+; < a1: sprite pos to store
+; < d0: x
+; < d1: y
 
+store_sprite_pos
+    movem.l  d0-d2/a0/a2,-(a7)
+    lea     HWSPR_TAB_YPOS,a2
+	add.w	d1,d1
+	add.w	d1,d1
+    move.l  (a2,d1.w),d2
+    lea     HWSPR_TAB_XPOS,a2
+	add.w	d0,d0
+	add.w	d0,d0
+    or.l    (a2,d0.w),d2    
+    move.l  d2,(a1)
+    movem.l  (a7)+,d0-d2/a0/a2
+    rts
+
+;d0.w Xpos 
+;d1.w Ypos 
+
+
+compute_sprite_xy_table
+
+	moveq	#16-1,d4	; Set value for Y Size
+
+        lea     HWSPR_TAB_XPOS,a0
+        lea     HWSPR_TAB_YPOS,a1
+
+        move.l  #512-1,d7
+        moveq   #0,d0
+        moveq   #0,d1
+        moveq   #0,d2
+        moveq   #0,d3
+
+        moveq   #0,d6           ; counter
+
+.loop:
+        move.w  d6,d1           ; vstart
+        move.w  d6,d2
+        lsr.w   #8,d2
+        and.w   #1,d2           ; vstart high bit
+        lsl.w   #2,d2           ; into bit position 2
+        and.w   #$ff,d1         ; vstart low bits
+        lsl.w   #8,d1           ; Word 1
+        move.w  d1,(a1)+        ; store SPRPOS word
+
+        move.w  d6,d1           ; vstop
+        move.w  d6,d3
+        add.w   d4,d1		; Sprite size Y
+        add.w   d4,d3
+        lsr.w   #8,d3
+        and.w   #1,d3           ; vstart high bit
+        lsl.w   #1,d3           ; into bit position 2
+        and.w   #$ff,d1         ; vstart low bits
+        lsl.w   #8,d1           ; Word 1
+        or.w    d2,d1
+        or.w    d3,d1
+        ;;or.w    #$80,d1         ; set Attach bit (or not?)
+        move.w  d1,(a1)+        ; store Y SPRCTL word
+; Now do horizontal
+
+        moveq   #0,d0
+        moveq   #0,d1
+        move.w  d6,d0
+        move.w  d6,d1
+        and.w   #1,d0
+        lsr.w   #1,d1
+        move.w  d1,(a0)+        ; Store Hstart High bits
+        move.w  d0,(a0)+        ; Store Hstart Low bits
+
+        addq.w  #1,d6
+        dbf     d7,.loop
+        rts
+
+ 
+compute_collision_table
+    lea maze_data(pc),a0
+    lea collision_table,a1
+    move.w  #NB_BYTES_PER_LINE*NB_LINES-1,d0    ; nb bytes
+.loop
+    move.b  (a0)+,d1
+    moveq.l #7,d2
+.bitloop
+    btst    #7,d1
+    sne (a1)
+    addq.l  #1,a1
+    lsr.b   #1,d1
+    dbf d2,.bitloop
+    dbf d0,.loop
+    rts
+
+mul224_table
+	rept	256
+	dc.w	REPTN*224
+	endr
+
+; < A0: data (16x16)
+; < A0: plane
+; < D0: X
+; < D1: Y
+
+blit_plane:
+Screenwidth = 320
+blitw = 2
+blith = 16
+byteoffset = 40*40+6
+
+    lea $DFF000,A5
+	move.l #$09f00000,bltcon0(a5)	;A->D copy, no shifts, ascending mode
+	move.l #$ffffffff,bltafwm(a5)	;no masking of first/last word
+	move.w #0,bltamod(a5)		;A modulo=bytes to skip between lines
+	move.w #Screenwidth/8-blitw,bltdmod(a5)	;D modulo
+.nextp
+	; try blit ghost
+	move.l a0,bltapt(a5)	;source graphic top left corner
+	move.l a1,bltdpt(a5)	;destination top left corner
+	move.w #blith*64+blitw/2,bltsize(a5)	;rectangle size, starts blit
+	bsr	wait_blit
+    rts
+    
+wait_blit
+	TST.B	$BFE001
+.wait
+	BTST	#6,dmaconr+$DFF000
+	BNE.S	.wait
+	rts
+ 
+ 
 GRname:   dc.b "graphics.library",0
 
 maze_data:
@@ -184,7 +336,17 @@ maze_data:
 
 	even
 	
-    SECTION  S2,DATA,CHIP
+    SECTION  S2,BSS
+HWSPR_TAB_XPOS:	
+	ds.l	512			
+
+HWSPR_TAB_YPOS:
+	ds.l	512
+    
+collision_table
+    ds.b    NB_BYTES_PER_LINE*NB_LINES*8,0
+    
+    SECTION  S3,DATA,CHIP
 
 coplist
 bitplanes:
@@ -207,9 +369,27 @@ sprites:
     ; red ghost
     dc.w    sprpt,0
     dc.w    sprpt+2,0
+    ; empty
+    dc.w    sprpt+4,0
+    dc.w    sprpt+6,0
     ; pink ghost
     dc.w    sprpt+8,0
     dc.w    sprpt+10,0
+    ; empty
+    dc.w    sprpt+12,0
+    dc.w    sprpt+14,0
+    ; cyan ghost
+    dc.w    sprpt+16,0
+    dc.w    sprpt+18,0
+    ; empty
+    dc.w    sprpt+20,0
+    dc.w    sprpt+22,0
+    ; orange ghost
+    dc.w    sprpt+24,0
+    dc.w    sprpt+26,0
+    ; empty
+    dc.w    sprpt+28,0
+    dc.w    sprpt+30,0
 
  
 end_color_copper:
@@ -227,20 +407,18 @@ end_color_copper:
 screen_data:
     ds.b    SCREEN_PLANE_SIZE*NB_PLANES,0
 	
-SPRITE_POS:MACRO
-    DC.W ((\2&$FF)<<8)|(((\1-1)&$1FE)>>1)
-	DC.W (((\2+\3)&$FF)<<8)|((\2&$100)>>6)|(((\2+\3)&$100)>>7)|((\1-1)&$1)
-    ENDM
     
+ghosts:
+    dc.l    red_ghost,pink_ghost
 pac_left
     incbin  "pac_left.bin"
 red_ghost
-	SPRITE_POS  10,10,16
-	dc.w	$30A0,$4090
+	dc.w	$3080,$4090
     incbin  "red_ghost.bin"
 pink_ghost
-	;SPRITE_POS  100,60,16
-	dc.w	$3080,$4090
+	dc.w	$30A0,$4090
     incbin  "pink_ghost.bin"
-
+empty_sprite
+    dc.l    0
     
+    	
