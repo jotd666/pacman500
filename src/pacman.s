@@ -51,7 +51,7 @@ SCREEN_PLANE_SIZE = 40*NB_LINES
 NB_PLANES   = 4
 
 Start:
-    bsr compute_sprite_xy_table
+    ;bsr compute_sprite_xy_table
     bsr compute_collision_table
 
     
@@ -126,42 +126,84 @@ MakeCL:
     add.l   #40-4,a1
     dbf d0,.copypac
     
-    lea  sprites,a0
-    lea  red_ghost,a1
-    move.w  #$10,d0
-    move.w  #$20,d1
-    ;bsr store_sprite_pos
-    move.l  a1,d0
-    move.w  d0,(6,a0)
-    swap    d0
-    move.w  d0,(2,a0)
-    addq.l  #8,a0
 
+    
+    move.w  #7,d1
+.emptyspr
+    lea  sprites,a0
     lea empty_sprite,a1
     move.l  a1,d0
     move.w  d0,(6,a0)
     swap    d0
     move.w  d0,(2,a0)
     addq.l  #8,a0
+    dbf d1,.emptyspr
     
+    lea  sprites,a0
+    move.w  #10,d0
+    move.w  #10,d1
+    bsr store_sprite_pos
+    lea  red_ghost,a1
+    move.l  d0,(a1)
+    move.l  a1,d0
+    move.w  d0,(6,a0)
+    swap    d0
+    move.w  d0,(2,a0)
+    
+    add.l  #16,a0
+    move.w  #30,d0
+    move.w  #80,d1
+    bsr store_sprite_pos
     lea  pink_ghost,a1
-    move.w  #$30,d0
-    move.w  #$40,d1
-    ;bsr store_sprite_pos
+    move.l  d0,(a1)
     move.l  a1,d0
     move.w  d0,(6,a0)
     swap    d0
     move.w  d0,(2,a0)
-    addq.l  #8,a0
-    
-    lea empty_sprite,a1
+
+    add.l  #16,a0
+    move.w  #48,d0
+    move.w  #80,d1
+    bsr store_sprite_pos
+    lea  cyan_ghost,a1
+    move.l  d0,(a1)
     move.l  a1,d0
     move.w  d0,(6,a0)
     swap    d0
     move.w  d0,(2,a0)
-    addq.l  #8,a0
+
+    add.l  #16,a0
+    move.w  #86,d0
+    move.w  #80,d1
+    bsr store_sprite_pos
+    lea  orange_ghost,a1
+    move.l  d0,(a1)
+    move.l  a1,d0
+    move.w  d0,(6,a0)
+    swap    d0
+    move.w  d0,(2,a0)
+
 
     move.w #$83E0,dmacon(a5)
+    
+; < A0: data (16x16)
+; < A1: plane
+; < D0: X
+; < D1: Y
+
+    lea pac_left,a0
+    lea	screen_data+SCREEN_PLANE_SIZE,a1
+    move.w  #100,d0
+    move.w  #100,d1
+    bsr blit_plane
+
+    lea pac_left,a0
+    lea	screen_data+SCREEN_PLANE_SIZE,a1
+    move.w  #102,d0
+    move.w  #118,d1
+    bsr blit_plane
+   
+
     
 	; now sprite test
 	bsr		mouse
@@ -195,85 +237,40 @@ mouse:
 	BNE  mouse
 	rts
 	
-SPRITE_POS:MACRO
-    DC.W ((\2&$FF)<<8)|(((\1-1)&$1FE)>>1)
-	DC.W (((\2+\3)&$FF)<<8)|((\2&$100)>>6)|(((\2+\3)&$100)>>7)|((\1-1)&$1)
-    ENDM
 
-; < a1: sprite pos to store
-; < d0: x
-; < d1: y
-
+; < d0.w: x
+; < d1.w: y
+; > d0.L: control word
 store_sprite_pos
-    movem.l  d0-d2/a0/a2,-(a7)
-    lea     HWSPR_TAB_YPOS,a2
-	add.w	d1,d1
-	add.w	d1,d1
-    move.l  (a2,d1.w),d2
-    lea     HWSPR_TAB_XPOS,a2
-	add.w	d0,d0
-	add.w	d0,d0
-    or.l    (a2,d0.w),d2    
-    move.l  d2,(a1)
-    movem.l  (a7)+,d0-d2/a0/a2
+    movem.l  d1/a0/a1,-(a7)
+
+    lea	HW_SpriteXTable(pc),a0
+    lea	HW_SpriteYTable(pc),a1
+
+    add.w	d0,d0
+    add.w	d0,d0
+    move.l	(a0,d0.w),d0
+    add.w	d1,d1
+    add.w	d1,d1
+    or.l	(a1,d1.w),d0
+    movem.l  (a7)+,d1/a0/a1
     rts
 
-;d0.w Xpos 
-;d1.w Ypos 
+	even
+HW_SpriteXTable
+  rept 320
+x   set REPTN+$80
+    dc.b  0, x>>1, 0, x&1
+  endr
 
 
-compute_sprite_xy_table
+HW_SpriteYTable
+  rept 256
+ys  set REPTN+$2c
+ye  set ys+16       ; size = 16
+    dc.b  ys&255, 0, ye&255, ((ys>>6)&%100) | ((ye>>7)&%10)
+  endr
 
-	moveq	#16-1,d4	; Set value for Y Size
-
-        lea     HWSPR_TAB_XPOS,a0
-        lea     HWSPR_TAB_YPOS,a1
-
-        move.l  #512-1,d7
-        moveq   #0,d0
-        moveq   #0,d1
-        moveq   #0,d2
-        moveq   #0,d3
-
-        moveq   #0,d6           ; counter
-
-.loop:
-        move.w  d6,d1           ; vstart
-        move.w  d6,d2
-        lsr.w   #8,d2
-        and.w   #1,d2           ; vstart high bit
-        lsl.w   #2,d2           ; into bit position 2
-        and.w   #$ff,d1         ; vstart low bits
-        lsl.w   #8,d1           ; Word 1
-        move.w  d1,(a1)+        ; store SPRPOS word
-
-        move.w  d6,d1           ; vstop
-        move.w  d6,d3
-        add.w   d4,d1		; Sprite size Y
-        add.w   d4,d3
-        lsr.w   #8,d3
-        and.w   #1,d3           ; vstart high bit
-        lsl.w   #1,d3           ; into bit position 2
-        and.w   #$ff,d1         ; vstart low bits
-        lsl.w   #8,d1           ; Word 1
-        or.w    d2,d1
-        or.w    d3,d1
-        ;;or.w    #$80,d1         ; set Attach bit (or not?)
-        move.w  d1,(a1)+        ; store Y SPRCTL word
-; Now do horizontal
-
-        moveq   #0,d0
-        moveq   #0,d1
-        move.w  d6,d0
-        move.w  d6,d1
-        and.w   #1,d0
-        lsr.w   #1,d1
-        move.w  d1,(a0)+        ; Store Hstart High bits
-        move.w  d0,(a0)+        ; Store Hstart Low bits
-
-        addq.w  #1,d6
-        dbf     d7,.loop
-        rts
 
  
 compute_collision_table
@@ -298,18 +295,35 @@ mul224_table
 	endr
 
 ; < A0: data (16x16)
-; < A0: plane
+; < A1: plane
 ; < D0: X
 ; < D1: Y
 
 blit_plane:
 Screenwidth = 320
-blitw = 2
+blitw = 4
 blith = 16
-byteoffset = 40*40+6
+
 
     lea $DFF000,A5
-	move.l #$09f00000,bltcon0(a5)	;A->D copy, no shifts, ascending mode
+    mulu    #Screenwidth/8,d1
+    move    d0,d3
+
+    and.w   #$F,D3
+    and.w   #$F0,d0
+    lsr.w   #3,d0
+    add.w   d0,d1
+    add.l   d1,a1       ; plane position
+    
+    swap    d3
+    clr.w   d3
+    lsl.l   #8,d3
+    lsl.l   #4,d3
+    
+    move.l  #$09f00000,d2    ;A->D copy, ascending mode
+    or.l   d3,d2            ; add shift
+    
+	move.l d2,bltcon0(a5)	
 	move.l #$ffffffff,bltafwm(a5)	;no masking of first/last word
 	move.w #0,bltamod(a5)		;A modulo=bytes to skip between lines
 	move.w #Screenwidth/8-blitw,bltdmod(a5)	;D modulo
@@ -334,8 +348,8 @@ GRname:   dc.b "graphics.library",0
 maze_data:
     incbin  "maze.bin"
 
-	even
-	
+
+  
     SECTION  S2,BSS
 HWSPR_TAB_XPOS:	
 	ds.l	512			
@@ -407,17 +421,23 @@ end_color_copper:
 screen_data:
     ds.b    SCREEN_PLANE_SIZE*NB_PLANES,0
 	
-    
+
 ghosts:
     dc.l    red_ghost,pink_ghost
 pac_left
     incbin  "pac_left.bin"
 red_ghost
-	dc.w	$3080,$4090
+    dc.l    0
     incbin  "red_ghost.bin"
 pink_ghost
-	dc.w	$30A0,$4090
-    incbin  "pink_ghost.bin"
+    dc.l    0
+    incbin  "red_ghost.bin"
+cyan_ghost
+    dc.l    0
+    incbin  "red_ghost.bin"
+orange_ghost
+    dc.l    0
+    incbin  "red_ghost.bin"
 empty_sprite
     dc.l    0
     
