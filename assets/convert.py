@@ -27,9 +27,9 @@ bitplanelib.palette_dump(maze_palette,"maze.s")
 
 # ORDER MATTERS!!!!
 game_palette_txt = """
-     dc.w	$0000,$022f,$0ff0     ; black, maze blue, pac yellow
-     dc.w   $00f0,$00ff,$04ba,$04bf,$0d95,$0ddf
-	 dc.w	$0edf,$0f00,$0fb5,$0fbb,$0fbf,$0000,$0000
+     dc.w	$0000,$022f,$0ff0,$0F0,$FBB     ; black, maze blue, pac yellow, green (whatever), dot pink
+     dc.w   $00ff,$04ba,$04bf,$0d95,$0ddf
+	 dc.w	$0edf,$0f00,$0fb5,$0fbb,$0fbf,$0000
      ; sprite palette 16-32
      ; red ghost
      dc.w	$0000,$0f00,$022f,$0edf

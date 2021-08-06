@@ -45,30 +45,22 @@ StartList = 38
 Execbase  = 4
 
 NB_LINES = 248
-NB_BYTES_PER_LINE = 28
+NB_BYTES_PER_LINE = 40
+NB_BYTES_PER_MAZE_LINE = 28
 MAZE_PLANE_SIZE = NB_BYTES_PER_LINE*NB_LINES
 SCREEN_PLANE_SIZE = 40*NB_LINES
 NB_PLANES   = 4
+
+NB_DOTS_PER_LINE = 26
+NB_DOT_LINES = 29
 
 Start:
     ;bsr compute_sprite_xy_table
     bsr compute_collision_table
 
     
-    
-        ; copy maze data in bitplanes
-        lea maze_data(pc),a0
-        lea screen_data,a1
-        move.w  #NB_LINES-1,d0
-.copyline
-        move.w  #6,d1
-.copylong
-        move.l  (a0)+,(a1)+
-        dbf d1,.copylong
-        add.l  #12,a1
-		; init planes in copperlist (after colors)
-        dbf d0,.copyline
-        
+    bsr draw_maze
+    bsr draw_dots
         
         moveq #NB_PLANES,d4
         lea	bitplanes,a0              ; adresse de la Copper-List dans a0
@@ -222,7 +214,63 @@ MakeCL:
         move.w #$8060,dmacon(a5)        ; réinitialisation du canal DMA
         jsr _LVOPermit(a6)                  ; Task Switching autorisé
 
+draw_maze:    
+    ; copy maze data in bitplanes
+    lea maze_data(pc),a0
+    lea screen_data,a1
+    move.w  #NB_LINES-1,d0
+.copyline
+    move.w  #6,d1
+.copylong
+    move.l  (a0)+,(a1)+
+    dbf d1,.copylong
+    add.l  #12,a1
+    ; init planes in copperlist (after colors)
+    dbf d0,.copyline
+    rts    
 
+draw_dots:
+    ; init dots
+    lea dot_table_read_only(pc),a0
+    lea dot_table,a1
+    move.l  #NB_DOT_LINES*NB_DOTS_PER_LINE-1,d0
+.copy
+    move.b  (a0)+,(a1)+
+    dbf d0,.copy
+
+    lea dot_table,a0
+    lea	screen_data+SCREEN_PLANE_SIZE*2+NB_BYTES_PER_LINE*8+1,a1
+    
+    move.w  #NB_DOT_LINES-1,d0    
+.loopy
+    move.w  #NB_DOTS_PER_LINE-1,d1
+.loopx
+    move.b  (a0)+,d2
+    beq.b   .next
+    cmp.b   #1,d2
+    ; draw small dot
+    bne.b   .big
+    move.b  #%0011000,(NB_BYTES_PER_LINE*3,a1)
+    move.b  #%0011000,(NB_BYTES_PER_LINE*4,a1)
+    bra.b   .next
+.big
+    move.b  #%00111100,(a1)
+    move.b  #%01111110,(NB_BYTES_PER_LINE*1,a1)
+    move.b  #%11111111,(NB_BYTES_PER_LINE*2,a1)
+    move.b  #%11111111,(NB_BYTES_PER_LINE*3,a1)
+    move.b  #%11111111,(NB_BYTES_PER_LINE*4,a1)
+    move.b  #%11111111,(NB_BYTES_PER_LINE*5,a1)
+    move.b  #%01111110,(NB_BYTES_PER_LINE*6,a1)
+    move.b  #%00111100,(NB_BYTES_PER_LINE*7,a1)
+
+.next
+    addq.l  #1,a1
+    dbf d1,.loopx
+    add.l  #NB_BYTES_PER_LINE-NB_BYTES_PER_MAZE_LINE+2,a1
+    add.l   #NB_BYTES_PER_LINE*7,a1
+    dbf d0,.loopy
+    rts
+    
 ;mémoire des bitplanes libre
 
 
@@ -276,7 +324,7 @@ ye  set ys+16       ; size = 16
 compute_collision_table
     lea maze_data(pc),a0
     lea collision_table,a1
-    move.w  #NB_BYTES_PER_LINE*NB_LINES-1,d0    ; nb bytes
+    move.w  #NB_BYTES_PER_MAZE_LINE*NB_LINES-1,d0    ; nb bytes
 .loop
     move.b  (a0)+,d1
     moveq.l #7,d2
@@ -348,8 +396,33 @@ GRname:   dc.b "graphics.library",0
 maze_data:
     incbin  "maze.bin"
 
+    ; 26x29
+dot_table_read_only:
+    dc.b    1,1,1,1,1,1,1,1,1,1,1,1,0,0,1,1,1,1,1,1,1,1,1,1,1,1
+    dc.b    1,0,0,0,0,1,0,0,0,0,0,1,0,0,1,0,0,0,0,0,1,0,0,0,0,1
+    dc.b    2,0,0,0,0,1,0,0,0,0,0,1,0,0,1,0,0,0,0,0,1,0,0,0,0,2
+    dc.b    1,0,0,0,0,1,0,0,0,0,0,1,0,0,1,0,0,0,0,0,1,0,0,0,0,1
+    dc.b    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
+    dc.b    1,0,0,0,0,1,0,0,1,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,0,1
+    dc.b    1,0,0,0,0,1,0,0,1,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,0,1
+    dc.b    1,1,1,1,1,1,0,0,1,1,1,1,0,0,1,1,1,1,0,0,1,1,1,1,1,1
+    REPT    11
+    dc.b    0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0
+    ENDR
+    dc.b    1,1,1,1,1,1,1,1,1,1,1,1,0,0,1,1,1,1,1,1,1,1,1,1,1,1
+    dc.b    1,0,0,0,0,1,0,0,0,0,0,1,0,0,1,0,0,0,0,0,1,0,0,0,0,1
+    dc.b    1,0,0,0,0,1,0,0,0,0,0,1,0,0,1,0,0,0,0,0,1,0,0,0,0,1
+    dc.b    2,1,1,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,1,1,2
+    dc.b    0,0,1,0,0,1,0,0,1,0,0,0,0,0,0,0,0,1,0,0,1,0,0,1,0,0
+    dc.b    0,0,1,0,0,1,0,0,1,0,0,0,0,0,0,0,0,1,0,0,1,0,0,1,0,0
+    dc.b    1,1,1,1,1,1,0,0,1,1,1,1,0,0,1,1,1,1,0,0,1,1,1,1,1,1
+    dc.b    1,0,0,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,0,0,0,0,0,0,0,1
+    dc.b    1,0,0,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,0,0,0,0,0,0,0,1
+    dc.b    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
 
-  
+
+
+; BSS --------------------------------------
     SECTION  S2,BSS
 HWSPR_TAB_XPOS:	
 	ds.l	512			
@@ -359,6 +432,9 @@ HWSPR_TAB_YPOS:
     
 collision_table
     ds.b    NB_BYTES_PER_LINE*NB_LINES*8,0
+
+dot_table
+    ds.b    NB_DOTS_PER_LINE*NB_DOT_LINES
     
     SECTION  S3,DATA,CHIP
 
