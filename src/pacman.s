@@ -38,16 +38,19 @@ CIAAPRA = $BFE001
 	UWORD	xpos
 	UWORD	ypos
 	UWORD	direction
-    UBYTE   frame
+    UWORD   frame
 	LABEL	Character_SIZEOF
 
 	STRUCTURE	Ghost,0
 	STRUCT      BaseCharacter,Character_SIZEOF
     APTR     behaviour
+    APTR     frame_table
+    APTR     copperlist_address
     UWORD    frightened_time
-    UWORD    home_corner    
+    UWORD    home_corner   
+    UWORD    mode_time
     UBYTE    attacking
-    
+    UBYTE    pad
 	LABEL	Ghost_SIZEOF
     
     ;Exec Library Base Offsets
@@ -109,6 +112,7 @@ Start:
     bsr draw_dots
     bsr draw_lives_and_bonuses    
 
+    bsr init_ghosts
     
     moveq #NB_PLANES,d4
     lea	bitplanes,a0              ; adresse de la Copper-List dans a0
@@ -164,49 +168,7 @@ Start:
     addq.l  #8,a0
     dbf d1,.emptyspr
     
-    lea  sprites,a0
-    move.w  #10,d0
-    move.w  #10,d1
-    bsr store_sprite_pos
-    lea  red_ghost_2,a1
-    move.l  d0,(a1)
-    move.l  a1,d0
-    move.w  d0,(6,a0)
-    swap    d0
-    move.w  d0,(2,a0)
     
-    add.l  #16,a0
-    move.w  #30,d0
-    move.w  #80,d1
-    bsr store_sprite_pos
-    lea  pink_ghost_4,a1
-    move.l  d0,(a1)
-    move.l  a1,d0
-    move.w  d0,(6,a0)
-    swap    d0
-    move.w  d0,(2,a0)
-
-    add.l  #16,a0
-    move.w  #48,d0
-    move.w  #80,d1
-    bsr store_sprite_pos
-    lea  cyan_ghost_2,a1
-    move.l  d0,(a1)
-    move.l  a1,d0
-    move.w  d0,(6,a0)
-    swap    d0
-    move.w  d0,(2,a0)
-
-    add.l  #16,a0
-    move.w  #86,d0
-    move.w  #80,d1
-    bsr store_sprite_pos
-    lea  orange_ghost_3,a1
-    move.l  d0,(a1)
-    move.l  a1,d0
-    move.w  d0,(6,a0)
-    swap    d0
-    move.w  d0,(2,a0)
 
     ; init sprite, bitplane, whatever dma (not audio ATM)
     move.w #$83E0,dmacon(a5)
@@ -222,6 +184,8 @@ Start:
        
 	; now sprite test
 	bsr		mouse
+    
+    ; quit
     bsr     restore_interrupts
 			      
 
@@ -238,13 +202,77 @@ Start:
     moveq.l #0,d0
     rts
 
+RED_YSTART_POS = 88
+RED_XSTART_POS = 104
+OTHERS_XSTART_POS = RED_YSTART_POS+24
+
+init_ghosts
+    lea ghosts(pc),a0
+    lea sprites,a1   ; the sprite part of the copperlist
+    ; red ghost
+	move.w  #RED_XSTART_POS<<PRECISION,xpos(a0)
+	move.w	#RED_YSTART_POS<<PRECISION,ypos(a0)    ; TBD
+    move.w  #LEFT,direction(a0)
+    move.w  #3,frame(a0)
+    move.l  #0,behaviour        ; TBD
+    move.l  #red_ghost_frame_table,frame_table(a0)
+    move.l  a1,copperlist_address(a0)
+    clr.w    frightened_time(a0)
+    clr.w    home_corner(a0)    ; TBD
+    move.w  #30*50,mode_time(a0)
+    clr.b    attacking(a0)
+    add.l   #Ghost_SIZEOF,a0
+    ; pink ghost
+    add.l   #16,a1
+	move.w  #RED_XSTART_POS<<PRECISION,xpos(a0)
+	move.w	#OTHERS_XSTART_POS<<PRECISION,ypos(a0)    ; TBD
+    move.w  #DOWN,direction(a0)
+    move.w  #6,frame(a0)
+    move.l  #0,behaviour        ; TBD
+    move.l  #pink_ghost_frame_table,frame_table(a0)
+    move.l  a1,copperlist_address(a0)
+    clr.w    frightened_time(a0)
+    clr.w    home_corner(a0)    ; TBD
+    move.w  #30*50,mode_time(a0)
+    clr.b    attacking(a0)
+    add.l   #Ghost_SIZEOF,a0
+    ; cyan ghost
+    add.l   #16,a1
+	move.w  #(RED_XSTART_POS-16)<<PRECISION,xpos(a0)
+	move.w	#OTHERS_XSTART_POS<<PRECISION,ypos(a0)    ; TBD
+    move.w  #UP,direction(a0)
+    move.w  #4,frame(a0)
+    move.l  #0,behaviour        ; TBD
+    move.l  #cyan_ghost_frame_table,frame_table(a0)
+    move.l  a1,copperlist_address(a0)
+    clr.w    frightened_time(a0)
+    clr.w    home_corner(a0)    ; TBD
+    move.w  #30*50,mode_time(a0)
+    clr.b    attacking(a0)    
+    add.l   #Ghost_SIZEOF,a0
+    ; orange ghost
+    add.l   #16,a1
+	move.w  #(RED_XSTART_POS+16)<<PRECISION,xpos(a0)
+	move.w	#OTHERS_XSTART_POS<<PRECISION,ypos(a0)    ; TBD
+    move.w  #UP,direction(a0)
+    move.w  #4,frame(a0)
+    move.l  #0,behaviour        ; TBD
+    move.l  #orange_ghost_frame_table,frame_table(a0)
+    move.l  a1,copperlist_address(a0)
+    clr.w    frightened_time(a0)
+    clr.w    home_corner(a0)    ; TBD
+    move.w  #30*50,mode_time(a0)
+    clr.b    attacking(a0)
+    rts
+    
+
 init_player
     lea player(pc),a0
 	move.w  #104<<PRECISION,xpos(a0)
 	move.w	#180<<PRECISION,ypos(a0)
 	move.w 	#LEFT,direction(a0)
     move.w  #0,frame(a0)
-    move.w  #100,ready_timer
+    move.w  #50,ready_timer
 	rts	    
 
 draw_all
@@ -253,6 +281,8 @@ draw_all
     lea  pac_dir_table(pc),a0
     move.l  (a0,d0.w),a0
     move.w  frame(a2),d0
+    add.w   d0,d0
+    add.w   d0,d0
     move.l  (a0,d0.w),a0
 
     lea	screen_data+SCREEN_PLANE_SIZE,a1
@@ -262,6 +292,33 @@ draw_all
     lsr.w   #PRECISION,d1
     bsr blit_plane
 
+    ; set proper positions for ghosrs
+    
+    lea ghosts(pc),a0
+    moveq.l #3,d7
+.gloop    
+    move.w  xpos(a0),d0
+    lsr.w   #PRECISION,d0
+    move.w  ypos(a0),d1
+    lsr.w   #PRECISION,d1
+    bsr store_sprite_pos    
+    
+    move.l  frame_table(a0),a1
+    move.w  frame(a0),d2
+    add.w   d2,d2
+    add.w   d2,d2
+    move.l  (a1,d2.w),a1
+    move.l  d0,(a1)     ; store control word
+    move.l  a1,d2    
+    move.l  copperlist_address(a0),a1
+    move.w  d2,(6,a1)
+    swap    d2
+    move.w  d2,(2,a1)    
+    
+    add.l   #Ghost_SIZEOF,a0
+    dbf d7,.gloop
+    
+    
     tst.w   ready_timer
     beq.b   .no_ready
     lea	screen_data+SCREEN_PLANE_SIZE,a1
@@ -277,7 +334,6 @@ draw_all
 .still_ready        
     lea ready,a0
     bsr blit_plane_any
-    
 .no_ready
     rts
 
@@ -446,6 +502,10 @@ level3_interrupt:
     beq.b   .blitter
     ; copper
     bsr draw_all
+    tst.w   ready_timer
+    bne.b   .wait
+    bsr manage_all
+.wait
     move.w  #$0010,(intreq,a5) 
     movem.l (a7)+,d0-a6
     rte    
@@ -467,7 +527,36 @@ mouse:
 	BNE  mouse
 	rts
 	
-
+manage_all
+    lea player(pc),a0
+    move.l  joystick_state(pc),d0
+    btst    #JPB_BTN_RIGHT,d0
+    beq.b   .no_right
+    move.w  #RIGHT,direction(a0)
+    bra.b   .out
+.no_right
+    btst    #JPB_BTN_LEFT,d0
+    beq.b   .no_left
+    move.w  #LEFT,direction(a0)    
+    bra.b   .out
+.no_left
+    btst    #JPB_BTN_UP,d0
+    beq.b   .no_up
+    move.w  #UP,direction(a0)
+    bra.b   .out
+.no_up    
+    btst    #JPB_BTN_DOWN,d0
+    beq.b   .no_down
+    move.w  #DOWN,direction(a0)
+.no_down    
+.out
+    addq.w  #1,frame(a0)
+    cmp.w   #4,frame(a0)
+    bne.b   .no_floop
+    clr.w   frame(a0)
+.no_floop
+    rts
+    
 ; < d0.w: x
 ; < d1.w: y
 ; > d0.L: control word
@@ -633,6 +722,19 @@ gfxbase_copperlist
     dc.l    0
 GRname:   dc.b "graphics.library",0
     even
+
+pac_dir_table
+    dc.l    pac_anim_left,pac_anim_right,pac_anim_up,pac_anim_down
+    
+PAC_ANIM_TABLE:MACRO
+pac_anim_\1
+    dc.l    pac_dead,pac_\1_0,pac_\1_1,pac_\1_0
+    ENDM
+    
+    PAC_ANIM_TABLE  left
+    PAC_ANIM_TABLE  right
+    PAC_ANIM_TABLE  up
+    PAC_ANIM_TABLE  down
     
 maze_data:
     incbin  "maze.bin"
@@ -664,20 +766,8 @@ dot_table_read_only:
 player:
     ds.b    Character_SIZEOF
 
-pac_dir_table
-    dc.l    pac_anim_left
-    dc.l    pac_anim_right
-    dc.l    pac_anim_up
-    dc.l    pac_anim_down
-    
-pac_anim_left
-    dc.l    pac_dead,pac_left_0,pac_left_1
-pac_anim_right
-    dc.l    pac_dead,pac_right_0,pac_right_1
-pac_anim_up
-    dc.l    pac_dead,pac_up_0,pac_up_1
-pac_anim_down
-    dc.l    pac_dead,pac_down_0,pac_down_1
+ghosts:
+    ds.b    Ghost_SIZEOF*4
 
 ; BSS --------------------------------------
     SECTION  S2,BSS
@@ -763,6 +853,9 @@ screen_data:
 ready:
     incbin  "ready_0.bin"
 
+
+    
+    
 pac_left_0
     incbin  "pac_left_0.bin"
 pac_left_1    
@@ -794,6 +887,16 @@ bonus:
     incbin  "key.bin" 
     
 DECL_GHOST:MACRO
+\1_ghost_frame_table:
+    dc.l    \1_ghost_0
+    dc.l    \1_ghost_1
+    dc.l    \1_ghost_2
+    dc.l    \1_ghost_3
+    dc.l    \1_ghost_4
+    dc.l    \1_ghost_5
+    dc.l    \1_ghost_6
+    dc.l    \1_ghost_7
+    
 \1_ghost_0
     dc.l    0
     incbin  "ghost_0.bin"
