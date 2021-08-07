@@ -51,8 +51,11 @@ bitplanelib.palette_image2raw(sprites,r"../src/sprites.bin",game_palette,palette
 bitplanelib.palette_dump(game_palette,r"../src/palette_clist.s",as_copperlist=True)
 
 outdir = "dumps"
+sprites_dir = "sprites"
 
 for object in tiles["objects"]:
+    if object.get("ignore"):
+        continue
     name = object["name"]
     start_x = object["start_x"]+x_offset
     start_y = object["start_y"]+y_offset
@@ -80,7 +83,7 @@ for object in tiles["objects"]:
             if x_size != 16:
                 raise Exception("{} (frame #{}) width (as sprite) should 16, found {}".format(name,i,x_size))
             sprite_palette_offset = 16+(sprite_number//2)*4
-            bitplanelib.palette_image2sprite(cropped_img,"../src/{}.bin".format(name),
+            bitplanelib.palette_image2sprite(cropped_img,"../{}/{}_{}.bin".format(sprites_dir,name,i),
                 game_palette[sprite_palette_offset:sprite_palette_offset+4],palette_precision_mask=0xF0)
         else:
             # blitter object
@@ -93,4 +96,4 @@ for object in tiles["objects"]:
             img.paste(cropped_img)
             if len(p)==2:
                 # 1 plane
-                bitplanelib.palette_image2raw(img,"../src/{}.bin".format(name),p,palette_precision_mask=0xF0)
+                bitplanelib.palette_image2raw(img,"../{}/{}_{}.bin".format(sprites_dir,name,i),p,palette_precision_mask=0xF0)

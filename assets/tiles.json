@@ -6,19 +6,50 @@
  "height" : 16,
  "horizontal" : true,
  "objects":[{
-   "name":"pac_left",
+   "name":"pac_right",
    "frames":2,
    "start_x":0,
    "start_y":0
  },
  {
-   "name":"red_ghost",
+   "name":"pac_left",
+   "frames":2,
+   "start_x":0,
+   "start_y":16
+ },
+ {
+   "name":"pac_up",
+   "frames":2,
+   "start_x":0,
+   "start_y":32
+ },
+{
+   "name":"pac_down",
+   "frames":2,
+   "start_x":0,
+   "start_y":48
+ },
+{
+   "name":"pac_dead",
+   "frames":12,
+   "start_x":32,
+   "start_y":0
+ },
+ {
+   "name":"ghost",
    "sprite_number":0,
    "frames":8,
    "start_x":0,
    "start_y":64
   },
-{
+ {
+   "name":"ready",
+   "frames":1,
+   "start_x":142,
+   "start_y":18,
+   "width":96
+  },
+  {
    "name":"frightened_ghost",
    "sprite_number_disabled":0,
    "frames":4,
@@ -26,6 +57,7 @@
    "start_y":64
   },
 {
+   "ignore" : true,
    "name":"pink_ghost",
    "sprite_number":2,
    "frames":8,
@@ -33,6 +65,7 @@
    "start_y":80
   },
   {
+   "ignore" : true,
    "name":"cyan_ghost",
    "sprite_number":4,
    "frames":8,
@@ -40,7 +73,8 @@
    "start_y":96
   },
   {
-   "name":"orange_ghost",
+    "ignore" : true,
+  "name":"orange_ghost",
    "sprite_number":6,
    "frames":8,
    "start_x":0,
