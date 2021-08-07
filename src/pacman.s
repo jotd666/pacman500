@@ -98,12 +98,17 @@ Start:
 ;    jsr (_LVOWaitTOF,a6)
 ;    jsr (_LVOWaitTOF,a6)
 
+    
+    bsr init_interrupts
+    move.w  #$7FFF,(intena,a5)
+
+    bsr init_player
+    move.b  #3,nb_lives
+
     bsr draw_maze
     bsr draw_dots
-    bsr init_player
+    bsr draw_lives_and_bonuses    
 
-    bsr init_interrupts
-    ;move.w  #$7FFF,(intena,a5)
     
     moveq #NB_PLANES,d4
     lea	bitplanes,a0              ; adresse de la Copper-List dans a0
@@ -206,7 +211,8 @@ Start:
     ; init sprite, bitplane, whatever dma (not audio ATM)
     move.w #$83E0,dmacon(a5)
     ; init copper interrupts, mainly
-    move.w #$8038,intena(a5)
+
+    move.w #$C038,intena(a5)
     
     ; start game
 ; < A0: data (16x16)
@@ -238,7 +244,7 @@ init_player
 	move.w	#180<<PRECISION,ypos(a0)
 	move.w 	#LEFT,direction(a0)
     move.w  #0,frame(a0)
-    move.w  #50,ready_timer
+    move.w  #100,ready_timer
 	rts	    
 
 draw_all
@@ -259,13 +265,78 @@ draw_all
     tst.w   ready_timer
     beq.b   .no_ready
     lea	screen_data+SCREEN_PLANE_SIZE,a1
-    lea ready,a0
     move.w  #88,d0
     move.w  #136,d1
     move.w  #14,d2   ; 96
+    
+    subq.w  #1,ready_timer    
+    bne.b   .still_ready
+    ; remove "READY!" message
+    bsr clear_plane_any    
+    bra.b   .no_ready
+.still_ready        
+    lea ready,a0
     bsr blit_plane_any
     
 .no_ready
+    rts
+
+; < A1: dest
+; < D0: X (multiple of 8)
+; < D1: Y
+; < D2: blit width in bytes (+2)
+; ATM not using blitter
+
+clear_plane_any
+    lsr.w   #3,d0
+    add.w   d0,a1
+    mulu    #NB_BYTES_PER_LINE,d1
+    add.l   d1,a1
+    move.l  a1,a2
+    move.l  a2,a0    
+    subq.l  #1,d2
+    bmi.b   .out
+.yloop
+    move.l  d2,d1
+.xloop
+    clr.l   (a0)+
+    dbf d1,.xloop
+    add.l   #NB_BYTES_PER_LINE,a2
+    move.l  a2,a0
+    dbf d0,.yloop
+.out
+    rts
+    
+draw_lives_and_bonuses:
+    lea	screen_data+SCREEN_PLANE_SIZE,a1
+    move.l #NB_BYTES_PER_MAZE_LINE*8,d0
+    moveq.l #0,d1
+    move.l  #8,d2
+    bsr clear_plane_any
+
+    
+    lea	screen_data+SCREEN_PLANE_SIZE,a1
+    lea pac_lives,a0
+    move.b  nb_lives(pc),d7
+    ext     d7
+    subq.w  #2,d7
+    beq.b   .out
+    bmi.b   .out
+    move.w #NB_BYTES_PER_MAZE_LINE*8,d3
+.lloop
+    move.w  d3,d0
+    moveq.l #0,d1
+    bsr blit_plane
+    add.w   #16,d3
+    dbf d7,.lloop
+.out
+    ; TEMP
+    lea	screen_data+SCREEN_PLANE_SIZE,a1
+    move.l #NB_BYTES_PER_MAZE_LINE*8,d0
+    moveq.l #0,d1
+    move.l  #8,d2
+;    bsr clear_plane_any
+
     rts
     
 draw_maze:    
@@ -459,8 +530,12 @@ mul224_table
 ; < D1: Y
 
 blit_plane
+    movem.l d2-a6,-(a7)
     move.w  #4,d2       ; 16 pixels + 2 shift bytes
-
+    bsr blit_plane_any_internal
+    movem.l (a7)+,d2-a6
+    rts
+    
 ; < A0: data (widthx16)
 ; < A1: plane
 ; < D0: X
@@ -468,14 +543,18 @@ blit_plane
 ; < D2: blit width in bytes (+2)
 
 blit_plane_any:
-Screenwidth = 320
+    movem.l d2-a6,-(a7)
+    bsr blit_plane_any_internal
+    movem.l (a7)+,d2-a6
+    rts
+
+blit_plane_any_internal:
 
 blith = 16
 
-
     lea $DFF000,A5
     ; pre-compute the maximum shit here
-    mulu    #Screenwidth/8,d1
+    mulu    #NB_BYTES_PER_LINE,d1
     move    d0,d3
 
     and.w   #$F,D3
@@ -492,7 +571,7 @@ blith = 16
     move.l  #$09f00000,d4    ;A->D copy, ascending mode
     or.l   d3,d4            ; add shift
 
-	move.w #Screenwidth/8,d0
+	move.w #NB_BYTES_PER_LINE,d0
     sub.w   d2,d0       ; blit width
 
     move.w #blith*64,d3
@@ -513,6 +592,20 @@ blith = 16
 	move.l a1,bltdpt(a5)	;destination top left corner
 	move.w  d3,bltsize(a5)	;rectangle size, starts blit
     rts
+
+blit_3_planes
+    movem.l d2/d5/a0-a1,-(a7)
+    moveq.l #2,d5
+.loop
+    movem.l d0-d1,-(a7)
+    move.w  #4,d2       ; 16 pixels + 2 shift bytes
+    bsr blit_plane_any_internal
+    movem.l (a7)+,d0-d1
+    add.l   #SCREEN_PLANE_SIZE,a1
+    add.l   #64,a0
+    dbf d5,.loop
+    movem.l (a7)+,d2/d5/a0-a1
+    rts
     
 wait_blit
 	TST.B	$BFE001
@@ -527,7 +620,13 @@ joystick_state
     dc.l    0
 ready_timer
     dc.w    0
-    
+score
+    dc.l    0
+high_score
+    dc.l    0
+nb_lives
+    dc.b    0
+    even
 gfxbase
     dc.l    0
 gfxbase_copperlist
@@ -682,8 +781,17 @@ pac_down_1
     incbin  "pac_down_1.bin"
 pac_dead
     incbin  "pac_dead_0.bin"
-    
-    
+pac_lives
+    incbin  "pac_lives_0.bin"
+bonus:
+    incbin  "cherry.bin"
+    incbin  "strawberry.bin"
+    incbin  "orange.bin"
+    incbin  "apple.bin"
+    incbin  "melon.bin"
+    incbin  "galaxian.bin"
+    incbin  "bell.bin"
+    incbin  "key.bin" 
     
 DECL_GHOST:MACRO
 \1_ghost_0

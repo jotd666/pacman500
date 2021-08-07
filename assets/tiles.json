@@ -17,6 +17,12 @@
    "start_x":0,
    "start_y":16
  },
+{
+   "name":"pac_lives",
+   "frames":1,
+   "start_x":128,
+   "start_y":16
+ },
  {
    "name":"pac_up",
    "frames":2,
@@ -50,8 +56,9 @@
    "width":96
   },
   {
+   "ignore" : true,
    "name":"frightened_ghost",
-   "sprite_number_disabled":0,
+   "sprite_number":0,
    "frames":4,
    "start_x":128,
    "start_y":64

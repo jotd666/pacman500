@@ -19,6 +19,7 @@ maze = Image.open("maze.png")
 maze_palette = bitplanelib.palette_extract(maze,0xF0)
 bitplanelib.palette_dump(maze_palette,"maze.s")
 
+name_dict = {"bonus_{}".format(i):n for i,n in enumerate(["cherry","strawberry","orange","apple","melon","galaxian","bell","key"])}
 # we first did that to get the palette but we need to control
 # the order of the palette
 
@@ -63,6 +64,7 @@ for object in tiles["objects"]:
     width = object.get("width",default_width)
     height = object.get("height",default_height)
 
+
     for i in range(object["frames"]):
         if horizontal:
             x = i*width+start_x
@@ -94,6 +96,9 @@ for object in tiles["objects"]:
             # add 16 pixels
             img = Image.new("RGB",(x_size+16,cropped_img.size[1]))
             img.paste(cropped_img)
-            if len(p)==2:
-                # 1 plane
-                bitplanelib.palette_image2raw(img,"../{}/{}_{}.bin".format(sprites_dir,name,i),p,palette_precision_mask=0xF0)
+            # if 1 plane, pacman frames, save only 1 plane, else save all 4 planes
+            used_palette = p if len(p)==2 else game_palette
+            print(name,img.size)
+            namei = "{}_{}".format(name,i)
+            bitplanelib.palette_image2raw(img,"../{}/{}.bin".format(sprites_dir,name_dict.get(namei,namei)),used_palette,palette_precision_mask=0xF0)
+
