@@ -28,6 +28,7 @@
     
     include "whdmacros.i"
 
+    incdir "../sprites"
 
 	
 ;CIA-A registre port A (bouton souris)
@@ -35,9 +36,11 @@
 CIAAPRA = $BFE001
 
 	STRUCTURE	Character,0
-	UWORD	xpos
+	UWORD	xpos        ; in real coords (<<PRECISION)
 	UWORD	ypos
-	UWORD	direction
+    UWORD   h_speed
+    UWORD   v_speed
+	UWORD	direction   ; sprite orientation
     UWORD   frame
 	LABEL	Character_SIZEOF
 
@@ -64,16 +67,25 @@ StartList = 38
 
 Execbase  = 4
 
-NB_LINES = 248
 NB_BYTES_PER_LINE = 40
 NB_BYTES_PER_MAZE_LINE = 28
 MAZE_PLANE_SIZE = NB_BYTES_PER_LINE*NB_LINES
 SCREEN_PLANE_SIZE = 40*NB_LINES
 NB_PLANES   = 4
 
-NB_DOTS_PER_LINE = 26
-NB_DOT_LINES = 29
+NB_TILES_PER_LINE = 28
+NB_TILE_LINES = 31
+NB_LINES = NB_TILE_LINES*8
 
+RED_YSTART_POS = 88
+RED_XSTART_POS = 104
+OTHERS_XSTART_POS = RED_YSTART_POS+24
+
+BLINK_RATE = 20
+
+; coords are multiplied by 1<<PRECISION
+; so variable speeds can be applied (like floating point
+; but without floating point...)
 PRECISION = 4
 
 LEFT = 0
@@ -81,10 +93,28 @@ RIGHT = 1<<2
 UP = 2<<2
 DOWN = 3<<2
 
+; write current PC value to some address
+LOGPC:MACRO
+     bsr    .next_\1
+.next_\1
+      addq.l    #6,(a7) ; skip this & next instruction
+      move.l    (a7)+,$\1
+      ENDM
+
+MUL_TABLE:MACRO
+mul\1_table
+	rept	256
+	dc.w	REPTN*\1
+	endr
+    ENDM
+    
+REAL2SCREENCOORDS:MACRO
+    lsr.w   #PRECISION,d0
+    lsr.w   #PRECISION,d1
+    ENDM
+    
 Start:
     lea  _custom,a5
-    ;bsr compute_sprite_xy_table
-    bsr compute_collision_table
     move.b  #0,controller_joypad_1
     
     move.l  4,a6
@@ -102,6 +132,7 @@ Start:
 ;    jsr (_LVOWaitTOF,a6)
 
     
+    
     bsr init_interrupts
     move.w  #$7FFF,(intena,a5)
 
@@ -109,6 +140,14 @@ Start:
     move.b  #3,nb_lives
 
     bsr draw_maze
+    ;;bsr draw_bounds
+    lea test(pc),a0
+    move.w  #224,d0
+    move.w  #40,d1
+    lea	screen_data+SCREEN_PLANE_SIZE*2,a1 
+
+    bsr write_string
+    
     bsr draw_dots
     bsr draw_lives_and_bonuses    
 
@@ -202,9 +241,9 @@ Start:
     moveq.l #0,d0
     rts
 
-RED_YSTART_POS = 88
-RED_XSTART_POS = 104
-OTHERS_XSTART_POS = RED_YSTART_POS+24
+test
+    dc.b    "NAMCO !!!",0
+    even
 
 init_ghosts
     lea ghosts(pc),a0
@@ -225,7 +264,7 @@ init_ghosts
     ; pink ghost
     add.l   #16,a1
 	move.w  #RED_XSTART_POS<<PRECISION,xpos(a0)
-	move.w	#OTHERS_XSTART_POS<<PRECISION,ypos(a0)    ; TBD
+	move.w	#OTHERS_XSTART_POS<<PRECISION,ypos(a0)
     move.w  #DOWN,direction(a0)
     move.w  #6,frame(a0)
     move.l  #0,behaviour        ; TBD
@@ -239,7 +278,7 @@ init_ghosts
     ; cyan ghost
     add.l   #16,a1
 	move.w  #(RED_XSTART_POS-16)<<PRECISION,xpos(a0)
-	move.w	#OTHERS_XSTART_POS<<PRECISION,ypos(a0)    ; TBD
+	move.w	#OTHERS_XSTART_POS<<PRECISION,ypos(a0)
     move.w  #UP,direction(a0)
     move.w  #4,frame(a0)
     move.l  #0,behaviour        ; TBD
@@ -253,7 +292,7 @@ init_ghosts
     ; orange ghost
     add.l   #16,a1
 	move.w  #(RED_XSTART_POS+16)<<PRECISION,xpos(a0)
-	move.w	#OTHERS_XSTART_POS<<PRECISION,ypos(a0)    ; TBD
+	move.w	#OTHERS_XSTART_POS<<PRECISION,ypos(a0)
     move.w  #UP,direction(a0)
     move.w  #4,frame(a0)
     move.l  #0,behaviour        ; TBD
@@ -265,12 +304,17 @@ init_ghosts
     clr.b    attacking(a0)
     rts
     
-
 init_player
     lea player(pc),a0
 	move.w  #104<<PRECISION,xpos(a0)
 	move.w	#180<<PRECISION,ypos(a0)
 	move.w 	#LEFT,direction(a0)
+    ; temp depends on difficulty level
+    move.w  player_speed_table(pc),d0
+    move.w  d0,player_speed
+    neg.w   d0
+    move.w  d0,h_speed(a0)
+    clr.b   v_speed(a0)
     move.w  #0,frame(a0)
     move.w  #50,ready_timer
 	rts	    
@@ -287,9 +331,8 @@ draw_all
 
     lea	screen_data+SCREEN_PLANE_SIZE,a1
     move.w  xpos(a2),d0
-    lsr.w   #PRECISION,d0
     move.w  ypos(a2),d1
-    lsr.w   #PRECISION,d1
+    REAL2SCREENCOORDS
     bsr blit_plane
 
     ; set proper positions for ghosrs
@@ -298,9 +341,8 @@ draw_all
     moveq.l #3,d7
 .gloop    
     move.w  xpos(a0),d0
-    lsr.w   #PRECISION,d0
     move.w  ypos(a0),d1
-    lsr.w   #PRECISION,d1
+    REAL2SCREENCOORDS
     bsr store_sprite_pos    
     
     move.l  frame_table(a0),a1
@@ -329,38 +371,67 @@ draw_all
     subq.w  #1,ready_timer    
     bne.b   .still_ready
     ; remove "READY!" message
-    bsr clear_plane_any    
+    bsr clear_plane_any
     bra.b   .no_ready
 .still_ready        
     lea ready,a0
     bsr blit_plane_any
 .no_ready
+    tst.w   ready_timer
+    bne.b   .anim_done
+    ; timer not running, animate
+    move.w  power_dot_timer(pc),d0
+    bne.b   .nospd
+    lea  powerdots(pc),a0
+    moveq.l #3,d0
+.drawpdloop
+    move.l  (a0)+,a1
+    bsr draw_power_dot
+    dbf d0,.drawpdloop
+    bra.b   .powerdot_done
+.nospd
+    cmp.w   #BLINK_RATE/2,d0
+    bne.b   .powerdot_done
+    lea  powerdots(pc),a0
+    moveq.l #3,d0
+.clrpdloop
+    move.l  (a0)+,a1
+    bsr clear_power_dot
+    dbf d0,.clrpdloop
+.powerdot_done
+
+.anim_done
     rts
 
+; what: clears a plane of any width (ATM not using blitter)
+; args:
 ; < A1: dest
 ; < D0: X (multiple of 8)
 ; < D1: Y
 ; < D2: blit width in bytes (+2)
-; ATM not using blitter
+; trashes: none
 
 clear_plane_any
+    movem.l d0-D2/a0-a2,-(a7)
     lsr.w   #3,d0
     add.w   d0,a1
-    mulu    #NB_BYTES_PER_LINE,d1
-    add.l   d1,a1
-    move.l  a1,a2
-    move.l  a2,a0    
-    subq.l  #1,d2
-    bmi.b   .out
+    lea mul40_table(pc),a2
+    move.w  (a2,d1.w),d1
+    add.w   d1,a1
+    move.l  a1,a0
+    move.w  #15,d0
 .yloop
-    move.l  d2,d1
+    move.w  d2,d1
+    addq.w  #1,d1   ; 2-1
 .xloop
-    clr.l   (a0)+
+    clr.b   (a0)+
     dbf d1,.xloop
-    add.l   #NB_BYTES_PER_LINE,a2
-    move.l  a2,a0
+    ; next line
+    add.l   #NB_BYTES_PER_LINE,a1
+    move.l  a1,a0
     dbf d0,.yloop
 .out
+    movem.l (a7)+,d0-D2/a0-a2
     rts
     
 draw_lives_and_bonuses:
@@ -390,8 +461,8 @@ draw_lives_and_bonuses:
     lea	screen_data+SCREEN_PLANE_SIZE,a1
     move.l #NB_BYTES_PER_MAZE_LINE*8,d0
     moveq.l #0,d1
-    move.l  #8,d2
-;    bsr clear_plane_any
+    move.l  #20,d2
+    ;bsr clear_plane_any
 
     rts
     
@@ -410,21 +481,64 @@ draw_maze:
     dbf d0,.copyline
     rts    
 
+; debug function
+draw_bounds
+    lea wall_table,a0
+    lea	screen_data+SCREEN_PLANE_SIZE*3,a1
+    
+    move.w  #NB_TILE_LINES-1,d0    
+.loopy
+    move.w  #NB_TILES_PER_LINE-1,d1
+.loopx
+    move.b  (a0)+,d2
+    beq.b   .next
+    cmp.b   #1,d2
+    ; draw small dot
+    bne.b   .pen
+    move.b  #%10101010,(NB_BYTES_PER_LINE*1,a1)
+    move.b  #%10101010,(NB_BYTES_PER_LINE*3,a1)
+    move.b  #%10101010,(NB_BYTES_PER_LINE*5,a1)
+    move.b  #%10101010,(NB_BYTES_PER_LINE*7,a1)
+    bra.b   .next
+.pen
+    move.b  #%11111111,(NB_BYTES_PER_LINE*1,a1)
+    move.b  #%11111111,(NB_BYTES_PER_LINE*3,a1)
+    move.b  #%11111111,(NB_BYTES_PER_LINE*5,a1)
+    move.b  #%11111111,(NB_BYTES_PER_LINE*7,a1)
+
+.next
+    addq.l  #1,a1
+    dbf d1,.loopx
+    add.l  #NB_BYTES_PER_LINE-NB_BYTES_PER_MAZE_LINE,a1
+    add.l   #NB_BYTES_PER_LINE*7,a1
+    dbf d0,.loopy
+    rts
 draw_dots:
+    ; draw pen gate
+    lea	screen_data+(RED_YSTART_POS+13)*NB_BYTES_PER_LINE+RED_XSTART_POS/8,a1
+    moveq.l #-1,d0
+    move.w  d0,(a1)
+    move.w  d0,(NB_BYTES_PER_LINE,a1)
+    add.l   #SCREEN_PLANE_SIZE,a1
+    move.w  d0,(a1)
+    move.w  d0,(NB_BYTES_PER_LINE,a1)
+
+
     ; init dots
+    lea     powerdots(pc),a2
     lea dot_table_read_only(pc),a0
     lea dot_table,a1
-    move.l  #NB_DOT_LINES*NB_DOTS_PER_LINE-1,d0
+    move.l  #NB_TILE_LINES*NB_TILES_PER_LINE-1,d0
 .copy
     move.b  (a0)+,(a1)+
     dbf d0,.copy
 
     lea dot_table,a0
-    lea	screen_data+SCREEN_PLANE_SIZE*2+NB_BYTES_PER_LINE*8+1,a1
+    lea	screen_data+SCREEN_PLANE_SIZE*2,a1
     
-    move.w  #NB_DOT_LINES-1,d0    
+    move.w  #NB_TILE_LINES-1,d0    
 .loopy
-    move.w  #NB_DOTS_PER_LINE-1,d1
+    move.w  #NB_TILES_PER_LINE-1,d1
 .loopx
     move.b  (a0)+,d2
     beq.b   .next
@@ -435,6 +549,19 @@ draw_dots:
     move.b  #%0011000,(NB_BYTES_PER_LINE*4,a1)
     bra.b   .next
 .big
+    move.l  a1,(a2)+        ; store powerdot address
+    bsr draw_power_dot
+
+.next
+    addq.l  #1,a1
+    dbf d1,.loopx
+    add.l  #NB_BYTES_PER_LINE-NB_BYTES_PER_MAZE_LINE,a1
+    add.l   #NB_BYTES_PER_LINE*7,a1
+    dbf d0,.loopy
+    rts
+
+; < A1 address
+draw_power_dot
     move.b  #%00111100,(a1)
     move.b  #%01111110,(NB_BYTES_PER_LINE*1,a1)
     move.b  #%11111111,(NB_BYTES_PER_LINE*2,a1)
@@ -443,13 +570,18 @@ draw_dots:
     move.b  #%11111111,(NB_BYTES_PER_LINE*5,a1)
     move.b  #%01111110,(NB_BYTES_PER_LINE*6,a1)
     move.b  #%00111100,(NB_BYTES_PER_LINE*7,a1)
-
-.next
-    addq.l  #1,a1
-    dbf d1,.loopx
-    add.l  #NB_BYTES_PER_LINE-NB_BYTES_PER_MAZE_LINE+2,a1
-    add.l   #NB_BYTES_PER_LINE*7,a1
-    dbf d0,.loopy
+    rts
+    
+; < A1 address
+clear_power_dot
+    clr.b  (a1)
+    clr.b  (NB_BYTES_PER_LINE*1,a1)
+    clr.b  (NB_BYTES_PER_LINE*2,a1)
+    clr.b  (NB_BYTES_PER_LINE*3,a1)
+    clr.b  (NB_BYTES_PER_LINE*4,a1)
+    clr.b  (NB_BYTES_PER_LINE*5,a1)
+    clr.b  (NB_BYTES_PER_LINE*6,a1)
+    clr.b  (NB_BYTES_PER_LINE*7,a1)
     rts
     
 init_interrupts
@@ -490,6 +622,10 @@ saved_dmacon
     dc.w    0
 saved_intena
     dc.w    0
+
+; what: level 3 interrupt (vblank/copper)
+; args: none
+; trashes: none
     
 level3_interrupt:
     movem.l d0-a6,-(a7)
@@ -504,7 +640,7 @@ level3_interrupt:
     bsr draw_all
     tst.w   ready_timer
     bne.b   .wait
-    bsr manage_all
+    bsr update_all
 .wait
     move.w  #$0010,(intreq,a5) 
     movem.l (a7)+,d0-a6
@@ -526,34 +662,124 @@ mouse:
 	BTST #6,$BFE001
 	BNE  mouse
 	rts
+
+; what: updates game state
+; args: none
+; trashes: potentially all registers
+
 	
-manage_all
-    lea player(pc),a0
+update_all
+    ; power dot blink timer
+    subq.w  #1,power_dot_timer
+    bpl.b   .no_reload
+    move.w  #BLINK_RATE,power_dot_timer
+.no_reload
+    ; player
+    lea player(pc),a4
     move.l  joystick_state(pc),d0
     btst    #JPB_BTN_RIGHT,d0
     beq.b   .no_right
-    move.w  #RIGHT,direction(a0)
-    bra.b   .out
+    move.w  player_speed(pc),h_speed(a4)
+    bra.b   .vertical
 .no_right
     btst    #JPB_BTN_LEFT,d0
-    beq.b   .no_left
-    move.w  #LEFT,direction(a0)    
-    bra.b   .out
-.no_left
+    beq.b   .vertical
+    move.w  player_speed(pc),d1
+    neg.w   d1
+    move.w  d1,h_speed(a4)
+    move.w  #LEFT,direction(a4)    
+.vertical
     btst    #JPB_BTN_UP,d0
     beq.b   .no_up
-    move.w  #UP,direction(a0)
+    move.w  #UP,direction(a4)
+    move.w  player_speed(pc),d1
+    neg.w   d1
+    move.w  d1,v_speed(a4)
     bra.b   .out
-.no_up    
+.no_up
     btst    #JPB_BTN_DOWN,d0
     beq.b   .no_down
-    move.w  #DOWN,direction(a0)
+    move.w  #DOWN,direction(a4)
+    move.w  player_speed(pc),v_speed(a4)
 .no_down    
 .out
-    addq.w  #1,frame(a0)
-    cmp.w   #4,frame(a0)
+    ; cache xy in regs
+    move.w  xpos(a4),d2
+    move.w  ypos(a4),d3
+    ; center!
+    addq.w  #8,d2
+    addq.w  #8,d3
+    move.w  v_speed(a4),d5
+    move.w  h_speed(a4),d4
+    ; now check if speeds are applicable to player
+    beq.b   .can_move_horizontally  ; no h speed: skip
+    move.w  d2,d0
+    move.w  d3,d1
+    REAL2SCREENCOORDS
+
+    tst.w   d4
+    beq.b   .to_left
+    bmi.b   .to_left
+    add.w  #16,d0
+.to_left
+    bsr collides_with_maze
+    tst.b d0
+    beq.b   .can_move_horizontally
+    ; cancel speed
+.horiz_forbidden    
+    clr.w   h_speed(a4)
+    clr.w   d4
+    bra.b   .vertical_test
+.can_move_horizontally
+    ; set direction
+    move.w  #LEFT,d6
+    tst.w   d4
+    bmi.b   .facing_left
+    move.w  #RIGHT,d6    
+.facing_left
+    move.w  d6,direction(a4)    
+.vertical_test
+    move.w  d2,d0
+    move.w  d3,d1
+    REAL2SCREENCOORDS
+    tst.w   d5
+    beq.b   .to_up
+    bmi.b   .to_up
+    add.w  #16,d1
+.to_up
+    ; vertical collision test, left bound
+
+    bsr collides_with_maze
+    tst.b d0
+    beq.b   .can_move_vertically
+.vertical_forbidden
+    ; cancel speed
+    clr.w   v_speed(a4)    
+    bra.b   .skip_add_vspeed    ; slight optim
+.can_move_vertically
+    ; set direction
+    move.w  #UP,d6
+    tst.w   d5
+    bmi.b   .facing_up
+    move.w  #DOWN,d6    
+.facing_up
+    move.w  d6,direction(a4)    
+
+    ; apply possible speeds
+    add.w   d5,d3
+.skip_add_vspeed    
+    add.w   d4,d2
+    move.w  d2,xpos(a4)
+    move.w  d3,ypos(a4)
+    
+    ; animate only if moves
+    tst.l   h_speed(a4) ; hack test both h and v
+    beq.b   .no_floop
+.animate
+    addq.w  #1,frame(a4)
+    cmp.w   #4,frame(a4)
     bne.b   .no_floop
-    clr.w   frame(a0)
+    clr.w   frame(a4)
 .no_floop
     rts
     
@@ -575,7 +801,12 @@ store_sprite_pos
     movem.l  (a7)+,d1/a0/a1
     rts
 
-	even
+player_speed_table
+    dc.w    8,5,6,7,8,9,4,5,6,7,8,9
+player_speed
+    dc.w    0
+    even
+    
 HW_SpriteXTable
   rept 320
 x   set REPTN+$80
@@ -590,33 +821,38 @@ ye  set ys+16       ; size = 16
     dc.b  ys&255, 0, ye&255, ((ys>>6)&%100) | ((ye>>7)&%10)
   endr
 
+; what: checks if x,y collides with maze 
+; args:
+; < d0 : x (screen coords)
+; < d1 : y
+; > d0 : nonzero ($FF) if collision, 0 if no collision
+; trashes: a0,a1,d1
 
- 
-compute_collision_table
-    lea maze_data(pc),a0
-    lea collision_table,a1
-    move.w  #NB_BYTES_PER_MAZE_LINE*NB_LINES-1,d0    ; nb bytes
-.loop
-    move.b  (a0)+,d1
-    moveq.l #7,d2
-.bitloop
-    btst    #7,d1
-    sne (a1)
-    addq.l  #1,a1
-    lsr.b   #1,d1
-    dbf d2,.bitloop
-    dbf d0,.loop
+collides_with_maze:
+    LOGPC   100
+    lea wall_table,a0
+    lea mul28_table(pc),a1
+    ; apply x,y offset    
+    lsr.w   #3,d1       ; 8 divide
+    add.w   d1,d1       ; times 2
+    add.w  (a1,d1.w),a0
+    lsr.w   #3,d0   ; 8 divide
+    move.b  (a0,d0.w),d0
+;    beq.b   .ok
+;    move.w  #$0F0,$DFF180
+;.ok
     rts
+  
+    MUL_TABLE   28
+    MUL_TABLE   40
 
-mul224_table
-	rept	256
-	dc.w	REPTN*224
-	endr
-
+; what: blits 16x16 data on one plane
+; args:
 ; < A0: data (16x16)
 ; < A1: plane
 ; < D0: X
 ; < D1: Y
+; trashes: D0-D1
 
 blit_plane
     movem.l d2-a6,-(a7)
@@ -625,11 +861,14 @@ blit_plane
     movem.l (a7)+,d2-a6
     rts
     
+; what: blits (any width)x16 data on one plane
+; args:
 ; < A0: data (widthx16)
 ; < A1: plane
 ; < D0: X
 ; < D1: Y
 ; < D2: blit width in bytes (+2)
+; trashes: D0-D1
 
 blit_plane_any:
     movem.l d2-a6,-(a7)
@@ -682,8 +921,16 @@ blith = 16
 	move.w  d3,bltsize(a5)	;rectangle size, starts blit
     rts
 
+; what: blits 16x16 data on 4 planes (for bonuses)
+; args:
+; < A0: data (widthx16)
+; < A1: plane
+; < D0: X
+; < D1: Y
+; trashes: D0-D1
+
 blit_3_planes
-    movem.l d2/d5/a0-a1,-(a7)
+    movem.l d2/d5/a0-a1/a5,-(a7)
     moveq.l #2,d5
 .loop
     movem.l d0-d1,-(a7)
@@ -693,7 +940,7 @@ blit_3_planes
     add.l   #SCREEN_PLANE_SIZE,a1
     add.l   #64,a0
     dbf d5,.loop
-    movem.l (a7)+,d2/d5/a0-a1
+    movem.l (a7)+,d2/d5/a0-a1/a5
     rts
     
 wait_blit
@@ -702,13 +949,76 @@ wait_blit
 	BTST	#6,dmaconr+$DFF000
 	BNE.S	.wait
 	rts
- 
+
+; what: writes a text in a single plane
+; args:
+; < A0: c string
+; < A1: plane
+; < D0: X (multiple of 8)
+; < D1: Y
+; trashes: D0-D1
+
+write_string
+    movem.l A0-A2/D2,-(a7)
+    lsr.w   #3,d0
+    clr.w   d2
+    lea mul40_table(pc),a2
+    move.w  (a2,d1.w),d1
+    add.w   d0,a1       ; plane address
+    add.w   d1,a1       ; plane address
+.loop
+    move.b  (a0)+,d2
+    beq.b   .end
+    cmp.b   #'!',d2
+    bne.b   .noexcl
+    lea exclamation(pc),a2
+    moveq.l #0,d2
+    bra.b   .wl
+.noexcl
+    cmp.b   #'0',d2
+    bcs.b   .next
+    cmp.b   #'9'+1,d2
+    bcc.b   .try_letters
+    ; digits
+    lea digits(pc),a2
+    sub.b   #'0',d2
+    bra.b   .wl
+    
+.try_letters: 
+    cmp.b   #'A',d2
+    bcs.b   .next
+    cmp.b   #'Z'+1,d2
+    bcc.b   .next
+    lea letters(pc),a2
+    sub.b   #'A',d2
+    bra.b   .wl
+    bra.b   .next
+.wl
+    lsl.w   #3,d2   ; *8
+    add.w   d2,a2
+    move.b  (a2)+,(a1)
+    move.b  (a2)+,(NB_BYTES_PER_LINE,a1)
+    move.b  (a2)+,(NB_BYTES_PER_LINE*2,a1)
+    move.b  (a2)+,(NB_BYTES_PER_LINE*3,a1)
+    move.b  (a2)+,(NB_BYTES_PER_LINE*4,a1)
+    move.b  (a2)+,(NB_BYTES_PER_LINE*5,a1)
+    move.b  (a2)+,(NB_BYTES_PER_LINE*6,a1)
+    move.b  (a2)+,(NB_BYTES_PER_LINE*7,a1)
+.next   
+    addq.l  #1,a1
+    bra.b   .loop
+.end
+    movem.l (a7)+,A0-A2/D2
+    rts
+    
     include ReadJoyPad.s
 
 joystick_state
     dc.l    0
 ready_timer
     dc.w    0
+power_dot_timer:
+    dc.w    BLINK_RATE
 score
     dc.l    0
 high_score
@@ -716,6 +1026,8 @@ high_score
 nb_lives
     dc.b    0
     even
+
+    
 gfxbase
     dc.l    0
 gfxbase_copperlist
@@ -739,30 +1051,110 @@ pac_anim_\1
 maze_data:
     incbin  "maze.bin"
 
-    ; 26x29
-dot_table_read_only:
-    dc.b    1,1,1,1,1,1,1,1,1,1,1,1,0,0,1,1,1,1,1,1,1,1,1,1,1,1
-    dc.b    1,0,0,0,0,1,0,0,0,0,0,1,0,0,1,0,0,0,0,0,1,0,0,0,0,1
-    dc.b    2,0,0,0,0,1,0,0,0,0,0,1,0,0,1,0,0,0,0,0,1,0,0,0,0,2
-    dc.b    1,0,0,0,0,1,0,0,0,0,0,1,0,0,1,0,0,0,0,0,1,0,0,0,0,1
-    dc.b    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
-    dc.b    1,0,0,0,0,1,0,0,1,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,0,1
-    dc.b    1,0,0,0,0,1,0,0,1,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,0,1
-    dc.b    1,1,1,1,1,1,0,0,1,1,1,1,0,0,1,1,1,1,0,0,1,1,1,1,1,1
-    REPT    11
-    dc.b    0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0
+digits:
+    incbin  "0.bin"
+    incbin  "1.bin"
+    incbin  "2.bin"
+    incbin  "3.bin"
+    incbin  "4.bin"
+    incbin  "5.bin"
+    incbin  "6.bin"
+    incbin  "7.bin"
+    incbin  "8.bin"
+    incbin  "9.bin"
+letters
+    incbin	"A.bin"
+    incbin	"B.bin"
+    incbin	"C.bin"
+    incbin	"D.bin"
+    incbin	"E.bin"
+    incbin	"F.bin"
+    incbin	"G.bin"
+    incbin	"H.bin"
+    incbin	"I.bin"
+    incbin	"J.bin"
+    incbin	"K.bin"
+    incbin	"L.bin"
+    incbin	"M.bin"
+    incbin	"N.bin"
+    incbin	"O.bin"
+    incbin	"P.bin"
+    incbin	"Q.bin"
+    incbin	"R.bin"
+    incbin	"S.bin"
+    incbin	"T.bin"
+    incbin	"U.bin"
+    incbin	"V.bin"
+    incbin	"W.bin"
+    incbin	"X.bin"
+    incbin	"Y.bin"
+    incbin	"Z.bin"    
+exclamation
+    incbin  "exclamation.bin"
+    
+wall_table:
+    ; ------------------------------- MID -------------------------
+    dc.b    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
+    dc.b    1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1
+    REPT    3
+    dc.b    1,0,1,1,1,1,0,1,1,1,1,1,0,1,1,0,1,1,1,1,1,0,1,1,1,1,0,1
     ENDR
-    dc.b    1,1,1,1,1,1,1,1,1,1,1,1,0,0,1,1,1,1,1,1,1,1,1,1,1,1
-    dc.b    1,0,0,0,0,1,0,0,0,0,0,1,0,0,1,0,0,0,0,0,1,0,0,0,0,1
-    dc.b    1,0,0,0,0,1,0,0,0,0,0,1,0,0,1,0,0,0,0,0,1,0,0,0,0,1
-    dc.b    2,1,1,0,0,1,1,1,1,1,1,1,0,0,1,1,1,1,1,1,1,0,0,1,1,2
-    dc.b    0,0,1,0,0,1,0,0,1,0,0,0,0,0,0,0,0,1,0,0,1,0,0,1,0,0
-    dc.b    0,0,1,0,0,1,0,0,1,0,0,0,0,0,0,0,0,1,0,0,1,0,0,1,0,0
-    dc.b    1,1,1,1,1,1,0,0,1,1,1,1,0,0,1,1,1,1,0,0,1,1,1,1,1,1
-    dc.b    1,0,0,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,0,0,0,0,0,0,0,1
-    dc.b    1,0,0,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,0,0,0,0,0,0,0,1
-    dc.b    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
+    dc.b    1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1
+    dc.b    1,0,1,1,1,1,0,1,1,0,1,1,1,1,1,1,1,1,0,1,1,0,1,1,1,1,0,1
+    dc.b    1,0,1,1,1,1,0,1,1,0,1,1,1,1,1,1,1,1,0,1,1,0,1,1,1,1,0,1
+    dc.b    1,0,0,0,0,0,0,1,1,0,0,0,0,1,1,0,0,0,0,1,1,0,0,0,0,0,0,1
+    dc.b    1,1,1,1,1,1,0,1,1,1,1,1,0,1,1,0,1,1,1,1,1,0,1,1,1,1,1,1
+    dc.b    1,1,1,1,1,1,0,1,1,1,1,1,0,1,1,0,1,1,1,1,1,0,1,1,1,1,1,1
+    dc.b    1,1,1,1,1,1,0,1,1,0,0,0,0,0,0,0,0,0,0,1,1,0,1,1,1,1,1,1
+    dc.b    1,1,1,1,1,1,0,1,1,0,1,1,1,1,1,1,1,1,0,1,1,0,1,1,1,1,1,1
+    dc.b    1,1,1,1,1,1,0,1,1,0,1,2,2,2,2,2,2,1,0,1,1,0,1,1,1,1,1,1
+    dc.b    0,0,0,0,0,0,0,0,0,0,1,2,2,2,2,2,2,1,0,0,0,0,0,0,0,0,0,0
+    dc.b    1,1,1,1,1,1,0,1,1,0,1,2,2,2,2,2,2,1,0,1,1,0,1,1,1,1,1,1
+    dc.b    1,1,1,1,1,1,0,1,1,0,1,1,1,1,1,1,1,1,0,1,1,0,1,1,1,1,1,1
+    dc.b    1,1,1,1,1,1,0,1,1,0,0,0,0,0,0,0,0,0,0,1,1,0,1,1,1,1,1,1
+    dc.b    1,1,1,1,1,1,0,1,1,0,1,1,1,1,1,1,1,1,0,1,1,0,1,1,1,1,1,1
+    dc.b    1,1,1,1,1,1,0,1,1,0,1,1,1,1,1,1,1,1,0,1,1,0,1,1,1,1,1,1
+    dc.b    1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1
+    dc.b    1,0,1,1,1,1,0,1,1,1,1,1,0,1,1,0,1,1,1,1,1,0,1,1,1,1,0,1
+    dc.b    1,0,1,1,1,1,0,1,1,1,1,1,0,1,1,0,1,1,1,1,1,0,1,1,1,1,0,1
+    dc.b    1,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,0,0,1
+    dc.b    1,1,1,0,1,1,0,1,1,0,1,1,1,1,1,1,1,1,0,1,1,0,1,1,0,1,1,1
+    dc.b    1,1,1,0,1,1,0,1,1,0,1,1,1,1,1,1,1,1,0,1,1,0,1,1,0,1,1,1    
+    dc.b    1,0,0,0,0,0,0,1,1,0,0,0,0,1,1,0,0,0,0,1,1,0,0,0,0,0,0,1
+    dc.b    1,0,1,1,1,1,1,1,1,1,1,1,0,1,1,0,1,1,1,1,1,1,1,1,1,1,0,1
+    dc.b    1,0,1,1,1,1,1,1,1,1,1,1,0,1,1,0,1,1,1,1,1,1,1,1,1,1,0,1
+    dc.b    1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1
+    dc.b    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
+    
+    ; 28x31
+dot_table_read_only:
+    dc.b    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+    dc.b    0,1,1,1,1,1,1,1,1,1,1,1,1,0,0,1,1,1,1,1,1,1,1,1,1,1,1,0
+    dc.b    0,1,0,0,0,0,1,0,0,0,0,0,1,0,0,1,0,0,0,0,0,1,0,0,0,0,1,0
+    dc.b    0,2,0,0,0,0,1,0,0,0,0,0,1,0,0,1,0,0,0,0,0,1,0,0,0,0,2,0
+    dc.b    0,1,0,0,0,0,1,0,0,0,0,0,1,0,0,1,0,0,0,0,0,1,0,0,0,0,1,0
+    dc.b    0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0
+    dc.b    0,1,0,0,0,0,1,0,0,1,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,0,1,0
+    dc.b    0,1,0,0,0,0,1,0,0,1,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,0,1,0
+    dc.b    0,1,1,1,1,1,1,0,0,1,1,1,1,0,0,1,1,1,1,0,0,1,1,1,1,1,1,0
+    REPT    11
+    dc.b    0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0
+    ENDR
+    dc.b    0,1,1,1,1,1,1,1,1,1,1,1,1,0,0,1,1,1,1,1,1,1,1,1,1,1,1,0
+    dc.b    0,1,0,0,0,0,1,0,0,0,0,0,1,0,0,1,0,0,0,0,0,1,0,0,0,0,1,0
+    dc.b    0,1,0,0,0,0,1,0,0,0,0,0,1,0,0,1,0,0,0,0,0,1,0,0,0,0,1,0
+    dc.b    0,2,1,1,0,0,1,1,1,1,1,1,1,0,0,1,1,1,1,1,1,1,0,0,1,1,2,0
+    dc.b    0,0,0,1,0,0,1,0,0,1,0,0,0,0,0,0,0,0,1,0,0,1,0,0,1,0,0,0
+    dc.b    0,0,0,1,0,0,1,0,0,1,0,0,0,0,0,0,0,0,1,0,0,1,0,0,1,0,0,0
+    dc.b    0,1,1,1,1,1,1,0,0,1,1,1,1,0,0,1,1,1,1,0,0,1,1,1,1,1,1,0
+    dc.b    0,1,0,0,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,0,0,0,0,0,0,0,1,0
+    dc.b    0,1,0,0,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,0,0,0,0,0,0,0,1,0
+    dc.b    0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0
+    dc.b    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 
+powerdots
+    ds.l    4
+    
 player:
     ds.b    Character_SIZEOF
 
@@ -777,11 +1169,9 @@ HWSPR_TAB_XPOS:
 HWSPR_TAB_YPOS:
 	ds.l	512
     
-collision_table
-    ds.b    NB_BYTES_PER_LINE*NB_LINES*8,0
 
 dot_table
-    ds.b    NB_DOTS_PER_LINE*NB_DOT_LINES
+    ds.b    NB_TILES_PER_LINE*NB_TILE_LINES
     
     SECTION  S3,DATA,CHIP
 
@@ -847,7 +1237,6 @@ screen_data:
     ds.b    SCREEN_PLANE_SIZE*NB_PLANES,0
 	
 
-    incdir "../sprites"
 
 
 ready:
