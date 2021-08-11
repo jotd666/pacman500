@@ -36,10 +36,12 @@
 CIAAPRA = $BFE001
 
 	STRUCTURE	Character,0
-	UWORD	xpos        ; in real coords (<<PRECISION)
+	UWORD	xpos
 	UWORD	ypos
     UWORD   h_speed
     UWORD   v_speed
+    UWORD   h_turn
+    UWORD   v_turn
 	UWORD	direction   ; sprite orientation
     UWORD   frame
 	LABEL	Character_SIZEOF
@@ -77,16 +79,13 @@ NB_TILES_PER_LINE = 28
 NB_TILE_LINES = 31
 NB_LINES = NB_TILE_LINES*8
 
-RED_YSTART_POS = 88
-RED_XSTART_POS = 104
+RED_YSTART_POS = 96
+RED_XSTART_POS = 112
 OTHERS_XSTART_POS = RED_YSTART_POS+24
 
 BLINK_RATE = 20
 
-; coords are multiplied by 1<<PRECISION
-; so variable speeds can be applied (like floating point
-; but without floating point...)
-PRECISION = 4
+
 
 LEFT = 0
 RIGHT = 1<<2
@@ -108,10 +107,6 @@ mul\1_table
 	endr
     ENDM
     
-REAL2SCREENCOORDS:MACRO
-    lsr.w   #PRECISION,d0
-    lsr.w   #PRECISION,d1
-    ENDM
     
 Start:
     lea  _custom,a5
@@ -140,12 +135,26 @@ Start:
     move.b  #3,nb_lives
 
     bsr draw_maze
+    ; for debug
     ;;bsr draw_bounds
-    lea test(pc),a0
-    move.w  #224,d0
-    move.w  #40,d1
-    lea	screen_data+SCREEN_PLANE_SIZE*2,a1 
 
+    lea	screen_data+SCREEN_PLANE_SIZE*3,a1  ; white
+    lea p1_string(pc),a0
+    move.w  #232,d0
+    move.w  #16,d1
+    bsr write_string
+    lea score_string(pc),a0
+    move.w  #232,d0
+    add.w  #8,d1
+    bsr write_string
+    
+    lea high_score_string(pc),a0
+    move.w  #232,d0
+    move.w  #48,d1
+    bsr write_string
+    lea score_string(pc),a0
+    move.w  #232,d0
+    add.w  #8,d1
     bsr write_string
     
     bsr draw_dots
@@ -241,16 +250,14 @@ Start:
     moveq.l #0,d0
     rts
 
-test
-    dc.b    "NAMCO !!!",0
-    even
+
 
 init_ghosts
     lea ghosts(pc),a0
     lea sprites,a1   ; the sprite part of the copperlist
     ; red ghost
-	move.w  #RED_XSTART_POS<<PRECISION,xpos(a0)
-	move.w	#RED_YSTART_POS<<PRECISION,ypos(a0)    ; TBD
+	move.w  #RED_XSTART_POS,xpos(a0)
+	move.w	#RED_YSTART_POS,ypos(a0)    ; TBD
     move.w  #LEFT,direction(a0)
     move.w  #3,frame(a0)
     move.l  #0,behaviour        ; TBD
@@ -263,8 +270,8 @@ init_ghosts
     add.l   #Ghost_SIZEOF,a0
     ; pink ghost
     add.l   #16,a1
-	move.w  #RED_XSTART_POS<<PRECISION,xpos(a0)
-	move.w	#OTHERS_XSTART_POS<<PRECISION,ypos(a0)
+	move.w  #RED_XSTART_POS,xpos(a0)
+	move.w	#OTHERS_XSTART_POS,ypos(a0)
     move.w  #DOWN,direction(a0)
     move.w  #6,frame(a0)
     move.l  #0,behaviour        ; TBD
@@ -277,8 +284,8 @@ init_ghosts
     add.l   #Ghost_SIZEOF,a0
     ; cyan ghost
     add.l   #16,a1
-	move.w  #(RED_XSTART_POS-16)<<PRECISION,xpos(a0)
-	move.w	#OTHERS_XSTART_POS<<PRECISION,ypos(a0)
+	move.w  #(RED_XSTART_POS-16),xpos(a0)
+	move.w	#OTHERS_XSTART_POS,ypos(a0)
     move.w  #UP,direction(a0)
     move.w  #4,frame(a0)
     move.l  #0,behaviour        ; TBD
@@ -291,8 +298,8 @@ init_ghosts
     add.l   #Ghost_SIZEOF,a0
     ; orange ghost
     add.l   #16,a1
-	move.w  #(RED_XSTART_POS+16)<<PRECISION,xpos(a0)
-	move.w	#OTHERS_XSTART_POS<<PRECISION,ypos(a0)
+	move.w  #(RED_XSTART_POS+16),xpos(a0)
+	move.w	#OTHERS_XSTART_POS,ypos(a0)
     move.w  #UP,direction(a0)
     move.w  #4,frame(a0)
     move.l  #0,behaviour        ; TBD
@@ -306,19 +313,76 @@ init_ghosts
     
 init_player
     lea player(pc),a0
-	move.w  #104<<PRECISION,xpos(a0)
-	move.w	#180<<PRECISION,ypos(a0)
+	move.w  #112,xpos(a0)
+	move.w	#188,ypos(a0)
 	move.w 	#LEFT,direction(a0)
     ; temp depends on difficulty level
     move.w  player_speed_table(pc),d0
     move.w  d0,player_speed
     neg.w   d0
     move.w  d0,h_speed(a0)
-    clr.b   v_speed(a0)
+    clr.w   v_speed(a0)
+    clr.w   h_turn(a0)
+    clr.w   v_turn(a0)
     move.w  #0,frame(a0)
     move.w  #50,ready_timer
 	rts	    
 
+draw_debug
+    lea player(pc),a2
+    move.w  #232+8,d0
+    move.w  #60,d1
+    lea	screen_data+SCREEN_PLANE_SIZE*3,a1 
+    lea .px(pc),a0
+    bsr write_string
+    lsl.w   #3,d0
+    add.w  #232+8,d0
+    clr.l   d2
+    move.w xpos(a2),d2
+    move.w  #3,d3
+    bsr write_decimal_number
+    move.w  #232+8,d0
+    add.w  #8,d1
+    lea .py(pc),a0
+    bsr write_string
+    lsl.w   #3,d0
+    add.w  #232+8,d0
+    clr.l   d2
+    move.w ypos(a2),d2
+    move.w  #3,d3
+    bsr write_decimal_number
+   ; frame
+    move.w  #232+8,d0
+    add.w  #8,d1
+    lea .frame(pc),a0
+    bsr write_string
+    lsl.w   #3,d0
+    add.w  #232+8,d0
+    clr.l   d2
+    move.w frame(a2),d2
+    move.w  #0,d3
+    bsr write_decimal_number
+    ; dir
+    move.w  #232+8,d0
+    add.w  #8,d1
+    lea .dir(pc),a0
+    bsr write_string
+    lsl.w   #3,d0
+    add.w  #232+8,d0
+    clr.l   d2
+    move.w direction(a2),d2
+    move.w  #0,d3
+    bsr write_decimal_number
+    rts
+    
+.px
+        dc.b    "PX ",0
+.py
+        dc.b    "PY ",0
+.frame
+        dc.b    "FR ",0
+.dir
+        dc.b    "DI ",0
 draw_all
     lea player(pc),a2
     move.w  direction(a2),d0
@@ -332,8 +396,21 @@ draw_all
     lea	screen_data+SCREEN_PLANE_SIZE,a1
     move.w  xpos(a2),d0
     move.w  ypos(a2),d1
-    REAL2SCREENCOORDS
+    ; center => top left
+    subq.w  #8,d0
+    subq.w  #8,d1
     bsr blit_plane
+    ; A1 is start of dest, use it to clear upper part and lower part
+    ; and possibly shifted to the left/right
+    move.l  a1,d0
+    btst    #0,d0
+    beq.b   .ok
+    subq.l  #1,a1   ; even address, always!
+.ok
+    clr.l   (-NB_BYTES_PER_LINE,a1)
+    clr.l   (-NB_BYTES_PER_LINE*2,a1)
+    clr.l   (-NB_BYTES_PER_LINE*3,a1)
+    clr.l   (NB_BYTES_PER_LINE*16,a1)
 
     ; set proper positions for ghosrs
     
@@ -342,7 +419,9 @@ draw_all
 .gloop    
     move.w  xpos(a0),d0
     move.w  ypos(a0),d1
-    REAL2SCREENCOORDS
+    ; center => top left
+    subq.w  #8,d0
+    subq.w  #8,d1
     bsr store_sprite_pos    
     
     move.l  frame_table(a0),a1
@@ -366,16 +445,16 @@ draw_all
     lea	screen_data+SCREEN_PLANE_SIZE,a1
     move.w  #88,d0
     move.w  #136,d1
-    move.w  #14,d2   ; 96
     
     subq.w  #1,ready_timer    
     bne.b   .still_ready
     ; remove "READY!" message
+    move.w  #14,d2   ; 96
     bsr clear_plane_any
     bra.b   .no_ready
 .still_ready        
-    lea ready,a0
-    bsr blit_plane_any
+    lea ready_string(pc),a0
+    bsr write_string
 .no_ready
     tst.w   ready_timer
     bne.b   .anim_done
@@ -416,6 +495,7 @@ clear_plane_any
     lsr.w   #3,d0
     add.w   d0,a1
     lea mul40_table(pc),a2
+    add.w   d1,d1    
     move.w  (a2,d1.w),d1
     add.w   d1,a1
     move.l  a1,a0
@@ -442,7 +522,6 @@ draw_lives_and_bonuses:
     bsr clear_plane_any
 
     
-    lea	screen_data+SCREEN_PLANE_SIZE,a1
     lea pac_lives,a0
     move.b  nb_lives(pc),d7
     ext     d7
@@ -451,6 +530,7 @@ draw_lives_and_bonuses:
     bmi.b   .out
     move.w #NB_BYTES_PER_MAZE_LINE*8,d3
 .lloop
+    lea	screen_data+SCREEN_PLANE_SIZE,a1
     move.w  d3,d0
     moveq.l #0,d1
     bsr blit_plane
@@ -515,7 +595,7 @@ draw_bounds
     rts
 draw_dots:
     ; draw pen gate
-    lea	screen_data+(RED_YSTART_POS+13)*NB_BYTES_PER_LINE+RED_XSTART_POS/8,a1
+    lea	screen_data+(RED_YSTART_POS+5)*NB_BYTES_PER_LINE+RED_XSTART_POS/8-1,a1
     moveq.l #-1,d0
     move.w  d0,(a1)
     move.w  d0,(NB_BYTES_PER_LINE,a1)
@@ -638,6 +718,7 @@ level3_interrupt:
     beq.b   .blitter
     ; copper
     bsr draw_all
+    ;; bsr draw_debug
     tst.w   ready_timer
     bne.b   .wait
     bsr update_all
@@ -667,7 +748,9 @@ mouse:
 ; args: none
 ; trashes: potentially all registers
 
-	
+; TODO: up or down + left misses turn
+; but OK on right!!
+
 update_all
     ; power dot blink timer
     subq.w  #1,power_dot_timer
@@ -677,6 +760,11 @@ update_all
     ; player
     lea player(pc),a4
     move.l  joystick_state(pc),d0
+    tst.w  v_turn(a4)
+    beq.b   .read_horiz
+    subq.w  #1,v_turn(a4)
+    bra.b   .vertical
+.read_horiz
     btst    #JPB_BTN_RIGHT,d0
     beq.b   .no_right
     move.w  player_speed(pc),h_speed(a4)
@@ -686,12 +774,15 @@ update_all
     beq.b   .vertical
     move.w  player_speed(pc),d1
     neg.w   d1
-    move.w  d1,h_speed(a4)
-    move.w  #LEFT,direction(a4)    
+    move.w  d1,h_speed(a4)  
 .vertical
+    tst.w  h_turn(a4)
+    beq.b   .read_vert
+    subq.w  #1,h_turn(a4)
+    bra.b   .out
+.read_vert
     btst    #JPB_BTN_UP,d0
     beq.b   .no_up
-    move.w  #UP,direction(a4)
     move.w  player_speed(pc),d1
     neg.w   d1
     move.w  d1,v_speed(a4)
@@ -699,90 +790,143 @@ update_all
 .no_up
     btst    #JPB_BTN_DOWN,d0
     beq.b   .no_down
-    move.w  #DOWN,direction(a4)
     move.w  player_speed(pc),v_speed(a4)
 .no_down    
 .out
-    ; cache xy in regs
+    ; cache xy in regs / save them
     move.w  xpos(a4),d2
     move.w  ypos(a4),d3
-    ; center!
-    addq.w  #8,d2
-    addq.w  #8,d3
-    move.w  v_speed(a4),d5
-    move.w  h_speed(a4),d4
-    ; now check if speeds are applicable to player
-    beq.b   .can_move_horizontally  ; no h speed: skip
+    move.w   h_speed(a4),d5 ; save hspeed for horiz pass 2
+    ; pass 1: horizontal move
     move.w  d2,d0
     move.w  d3,d1
-    REAL2SCREENCOORDS
-
-    tst.w   d4
-    beq.b   .to_left
+        
+    move.w  h_speed(a4),d4
+    ; now check if speeds are applicable to player
+    beq.b   .no_hmove
+    
     bmi.b   .to_left
-    add.w  #16,d0
+    move.w  #RIGHT,d6
+    add.w  #4,d0
+    bra.b   .conth
 .to_left
+    move.w  #LEFT,d6
+    sub.w  #5,d0
+.conth
     bsr collides_with_maze
     tst.b d0
     beq.b   .can_move_horizontally
     ; cancel speed
-.horiz_forbidden    
     clr.w   h_speed(a4)
-    clr.w   d4
-    bra.b   .vertical_test
+    bra.b   .no_hmove
 .can_move_horizontally
     ; set direction
-    move.w  #LEFT,d6
-    tst.w   d4
-    bmi.b   .facing_left
-    move.w  #RIGHT,d6    
-.facing_left
-    move.w  d6,direction(a4)    
-.vertical_test
+    move.w  d6,direction(a4)
+    
+    add.w   d4,d2
+    move.w  d2,xpos(a4)
+    bsr .animate
+.no_hmove
+    ; pass 2: vertical move
+    ; re-set coords
     move.w  d2,d0
     move.w  d3,d1
-    REAL2SCREENCOORDS
-    tst.w   d5
-    beq.b   .to_up
+    move.w  v_speed(a4),d4
+    ; now check if speeds are applicable to player
+    beq.b   .no_vmove
+    
     bmi.b   .to_up
-    add.w  #16,d1
+    move.w  #DOWN,d6
+    add.w  #4,d1
+    bra.b   .contv
 .to_up
-    ; vertical collision test, left bound
-
+    move.w  #UP,d6
+    sub.w  #5,d1
+.contv
     bsr collides_with_maze
     tst.b d0
     beq.b   .can_move_vertically
-.vertical_forbidden
-    ; cancel speed
-    clr.w   v_speed(a4)    
-    bra.b   .skip_add_vspeed    ; slight optim
+    ; cancel speed, note the turn
+    clr.w   v_speed(a4)
+    bra.b   .no_hmove2
 .can_move_vertically
-    ; set direction
-    move.w  #UP,d6
-    tst.w   d5
-    bmi.b   .facing_up
-    move.w  #DOWN,d6    
-.facing_up
-    move.w  d6,direction(a4)    
+    move.w  d6,direction(a4)
 
-    ; apply possible speeds
-    add.w   d5,d3
-.skip_add_vspeed    
+    tst.w   h_speed(a4)
+    beq.b   .no_horiz
+    move.w  #3,v_turn(a4)
+    move.w  #$F00,$DFF180    
+    ; cancel previous horiz speed if could move vertically
+    clr.w   h_speed(a4)
+.no_horiz
+    add.w   d4,d3
+    move.w  d3,ypos(a4)
+    bsr .animate
+    tst.w  v_turn(a4)
+    bne.b   .no_hmove2
+    ; now maybe that hmove is possible
+    ; pass 3: horizontal move adter successful vertical move
+    move.w  d2,d0
+    move.w  d3,d1
+        
+    move.w  d5,d4   ; check saved hspeed
+    ; now check if speeds are applicable to player
+    beq.b   .no_hmove2
+    
+    bmi.b   .to_left2
+    move.w  #RIGHT,d6
+    add.w  #4,d0
+    bra.b   .conth2
+.to_left2
+    move.w  #LEFT,d6
+    sub.w  #5,d0
+.conth2
+    bsr collides_with_maze
+    tst.b d0
+    beq.b   .can_move_horizontally2
+    ; cancel speed
+    clr.w   h_speed(a4)
+    bra.b   .no_hmove2
+.can_move_horizontally2
+    ; cancel previous vertical speed if could move horizontally
+    move.w  #3,h_turn(a4)
+    ;;move.w  #$0F0,$DFF180
+    clr.w   v_speed(a4)
+    ; re-set hspeed
+    move.w   d5,h_speed(a4)
+    ;move.w  d6,direction(a4)
+
     add.w   d4,d2
     move.w  d2,xpos(a4)
-    move.w  d3,ypos(a4)
+    bsr .animate
+.no_hmove2    
+.no_vmove
+    ; in the end, align pacman depending on direction
+    move.w  direction(a4),d6
+    move.w  #ypos,d5
+    cmp.w   #LEFT,d6
+    beq.b   .horiz
+    cmp.w   #RIGHT,d6
+    beq.b   .horiz
+    move.w  #xpos,d5
+.horiz
+    move.w  (a4,d5.w),d4
+    and.w   #$F8,d4
+    add.w   #4,d4
+    move.w  d4,(a4,d5.w)
+    rts
     
-    ; animate only if moves
-    tst.l   h_speed(a4) ; hack test both h and v
-    beq.b   .no_floop
+    
+    
 .animate
     addq.w  #1,frame(a4)
-    cmp.w   #4,frame(a4)
+    cmp.w   #(pac_anim_left_end-pac_anim_left)/4,frame(a4)
     bne.b   .no_floop
     clr.w   frame(a4)
 .no_floop
     rts
-    
+
+        
 ; < d0.w: x
 ; < d1.w: y
 ; > d0.L: control word
@@ -802,7 +946,7 @@ store_sprite_pos
     rts
 
 player_speed_table
-    dc.w    8,5,6,7,8,9,4,5,6,7,8,9
+    dc.w    1
 player_speed
     dc.w    0
     even
@@ -825,11 +969,10 @@ ye  set ys+16       ; size = 16
 ; args:
 ; < d0 : x (screen coords)
 ; < d1 : y
-; > d0 : nonzero ($FF) if collision, 0 if no collision
+; > d0 : nonzero (1,2) if collision (wall/pen gate), 0 if no collision
 ; trashes: a0,a1,d1
 
 collides_with_maze:
-    LOGPC   100
     lea wall_table,a0
     lea mul28_table(pc),a1
     ; apply x,y offset    
@@ -838,9 +981,6 @@ collides_with_maze:
     add.w  (a1,d1.w),a0
     lsr.w   #3,d0   ; 8 divide
     move.b  (a0,d0.w),d0
-;    beq.b   .ok
-;    move.w  #$0F0,$DFF180
-;.ok
     rts
   
     MUL_TABLE   28
@@ -853,12 +993,13 @@ collides_with_maze:
 ; < D0: X
 ; < D1: Y
 ; trashes: D0-D1
+; returns: A1 as start of destination (A1 = orig A1+40*D1+D0/8)
 
 blit_plane
-    movem.l d2-a6,-(a7)
+    movem.l d2-d4/a2-a5,-(a7)
     move.w  #4,d2       ; 16 pixels + 2 shift bytes
     bsr blit_plane_any_internal
-    movem.l (a7)+,d2-a6
+    movem.l (a7)+,d2-d4/a2-a5
     rts
     
 ; what: blits (any width)x16 data on one plane
@@ -868,12 +1009,12 @@ blit_plane
 ; < D0: X
 ; < D1: Y
 ; < D2: blit width in bytes (+2)
-; trashes: D0-D1
+; trashes: D0-D1, A1
 
 blit_plane_any:
-    movem.l d2-a6,-(a7)
+    movem.l d2-d4/a2-a5,-(a7)
     bsr blit_plane_any_internal
-    movem.l (a7)+,d2-a6
+    movem.l (a7)+,d2-d4/a2-a5
     rts
 
 blit_plane_any_internal:
@@ -882,7 +1023,12 @@ blith = 16
 
     lea $DFF000,A5
     ; pre-compute the maximum shit here
-    mulu    #NB_BYTES_PER_LINE,d1
+    lea mul40_table(pc),a2
+    add.w   d1,d1
+    move.w  (a2,d1.w),d1
+    swap    d1
+    clr.w   d1
+    swap    d1
     move    d0,d3
 
     and.w   #$F,D3
@@ -933,10 +1079,10 @@ blit_3_planes
     movem.l d2/d5/a0-a1/a5,-(a7)
     moveq.l #2,d5
 .loop
-    movem.l d0-d1,-(a7)
+    movem.l d0-d1/a1,-(a7)
     move.w  #4,d2       ; 16 pixels + 2 shift bytes
     bsr blit_plane_any_internal
-    movem.l (a7)+,d0-d1
+    movem.l (a7)+,d0-d1/a1
     add.l   #SCREEN_PLANE_SIZE,a1
     add.l   #64,a0
     dbf d5,.loop
@@ -950,25 +1096,149 @@ wait_blit
 	BNE.S	.wait
 	rts
 
+; what: writes an hexadecimal number (or BCD) in a single plane
+; args:
+; < A1: plane
+; < D0: X (multiple of 8)
+; < D1: Y
+; < D2: number value
+; < D3: number of padding zeroes
+; > D0: number of characters written
+
+write_hexadecimal_number
+
+    movem.l A0/D2-d5,-(a7)
+    cmp.w   #7,d3
+    bcs.b   .padok
+    move.w  #7,d3
+.padok
+    bsr     .write_num
+    movem.l (a7)+,A0/D2-d5
+    rts
+.write_num
+    lea .buf+8(pc),a0
+
+    
+.loop
+    subq    #1,d3    
+    move.b  d2,d5
+    and.b   #$F,d5
+    cmp.b   #10,d5
+    bcc.b   .letter
+    add.b   #'0',d5
+    bra.b   .ok
+.letter
+    add.b   #'A'-10,d5
+.ok
+    move.b  d5,-(a0)
+    lsr.l   #4,d2
+    beq.b   .write
+    bra.b   .loop
+.write
+    tst.b   d3
+    beq.b   .w
+    bmi.b   .w
+    subq    #1,d3
+.pad
+    move.b  #'0',-(a0)
+    dbf d3,.pad
+.w
+    bra write_string
+.buf
+    ds.b    8
+    dc.b    0
+    even
+    
+; what: writes an decimal number in a single plane
+; args:
+; < A1: plane
+; < D0: X (multiple of 8)
+; < D1: Y
+; < D2: number value
+; < D3: number of padding zeroes
+; > D0: number of characters written
+    
+write_decimal_number
+    movem.l A0/D2-d5,-(a7)
+    cmp.w   #18,d3
+    bcs.b   .padok
+    move.w  #18,d3
+.padok
+    cmp.l   #655361,d2
+    bcs.b   .one
+    sub.l   #4,d3
+    move.w  d0,d5
+    ; first write high part    
+    divu    #10000,d2
+    swap    d2
+    moveq.l #0,d4
+    move.w   d2,d4
+    clr.w   d2
+    swap    d2
+    bsr     .write_num
+    lsl.w   #3,d0
+    add.w   d5,d0   ; new xpos
+    
+    move.l  d4,d2
+    moveq   #4,d3   ; pad to 4
+.one
+    bsr     .write_num
+    movem.l (a7)+,A0/D2-d5
+    rts
+.write_num
+    lea .buf+20(pc),a0
+    tst.w   d2
+    beq.b   .zero
+.loop
+    divu    #10,d2
+    swap    d2
+    add.b   #'0',d2
+    subq    #1,d3
+    move.b  d2,-(a0)
+    clr.w   d2
+    swap    d2
+    tst.w   d2
+    beq.b   .write
+    bra.b   .loop
+.zero
+    subq    #1,d3
+    move.b  #'0',-(a0)
+.write
+    tst.b   d3
+    beq.b   .w
+    bmi.b   .w
+    subq    #1,d3
+.pad
+    move.b  #'0',-(a0)
+    dbf d3,.pad
+.w
+    bra write_string
+.buf
+    ds.b    20
+    dc.b    0
+    even
 ; what: writes a text in a single plane
 ; args:
 ; < A0: c string
 ; < A1: plane
 ; < D0: X (multiple of 8)
 ; < D1: Y
-; trashes: D0-D1
+; > D0: number of characters written
 
 write_string
-    movem.l A0-A2/D2,-(a7)
+    movem.l A0-A2/d1-D2,-(a7)
     lsr.w   #3,d0
     clr.w   d2
     lea mul40_table(pc),a2
+    add.w   d1,d1
     move.w  (a2,d1.w),d1
     add.w   d0,a1       ; plane address
     add.w   d1,a1       ; plane address
+    moveq.l #0,d0
 .loop
     move.b  (a0)+,d2
     beq.b   .end
+    addq.l  #1,d0
     cmp.b   #'!',d2
     bne.b   .noexcl
     lea exclamation(pc),a2
@@ -1008,7 +1278,7 @@ write_string
     addq.l  #1,a1
     bra.b   .loop
 .end
-    movem.l (a7)+,A0-A2/D2
+    movem.l (a7)+,A0-A2/d1-D2
     rts
     
     include ReadJoyPad.s
@@ -1040,7 +1310,10 @@ pac_dir_table
     
 PAC_ANIM_TABLE:MACRO
 pac_anim_\1
-    dc.l    pac_dead,pac_\1_0,pac_\1_1,pac_\1_0
+    ; original shows 1 frame each 1/30s. We can't do that here but we
+    ; can shorten some frames
+    dc.l    pac_dead,pac_dead,pac_\1_0,pac_\1_1,pac_\1_1,pac_\1_0
+pac_anim_\1_end
     ENDM
     
     PAC_ANIM_TABLE  left
@@ -1091,6 +1364,15 @@ letters
     incbin	"Z.bin"    
 exclamation
     incbin  "exclamation.bin"
+
+high_score_string
+    dc.b    " HIGH SCORE",0
+p1_string
+    dc.b    "     1UP",0
+score_string
+    dc.b    "       00",0
+ready_string
+    dc.b    "READY!",0
     
 wall_table:
     ; ------------------------------- MID -------------------------
@@ -1238,9 +1520,6 @@ screen_data:
 	
 
 
-
-ready:
-    incbin  "ready_0.bin"
 
 
     

@@ -48,13 +48,6 @@
    "start_x":0,
    "start_y":64
   },
- {
-   "name":"ready",
-   "frames":1,
-   "start_x":142,
-   "start_y":18,
-   "width":96
-  },
   {
    "ignore" : true,
    "name":"frightened_ghost",

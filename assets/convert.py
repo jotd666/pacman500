@@ -8,10 +8,12 @@ maze = Image.open("maze.png")
 maze_palette = bitplanelib.palette_extract(maze,0xF0)
 bitplanelib.palette_image2raw(maze,r"../{}/maze.bin".format(sprites_dir),maze_palette,palette_precision_mask=0xF0)
 
-# ORDER MATTERS!!!!
+# palette order matters
+# some key colors are located at a 2**n position
+# so they can be drawn with just one plane (pacman, white fonts)
 game_palette_txt = """
-     dc.w	$0000,$022f,$0ff0,$0fbf,$FBB     ; black, maze blue, pac yellow, pen gate pink, dot pink
-     dc.w   $00ff,$04ba,$0FFF,$0d95,$0ddf
+     dc.w	$0000,$022f,$0ff0,$0fbf     ; black, maze blue, pac yellow, pen gate pink
+     dc.w   $FBB,$00ff,$04ba,$0d95,$0FFF,$0ddf    ; dot pink, whatever, whatever, whatever, white
 	 dc.w	$0edf,$0f00,$0fb5,$0fbb,$0F0,$04bf
      ; sprite palette 16-32
      ; red ghost
