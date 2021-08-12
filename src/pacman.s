@@ -40,8 +40,7 @@ CIAAPRA = $BFE001
 	UWORD	ypos
     UWORD   h_speed
     UWORD   v_speed
-    UWORD   h_turn
-    UWORD   v_turn
+    UWORD   prepost_turn
 	UWORD	direction   ; sprite orientation
     UWORD   frame
 	LABEL	Character_SIZEOF
@@ -83,8 +82,8 @@ RED_YSTART_POS = 96
 RED_XSTART_POS = 112
 OTHERS_XSTART_POS = RED_YSTART_POS+24
 
-BLINK_RATE = 20
-
+BLINK_RATE = 20  ; for powerdots
+PREPOST_TURN_LOCK = 4
 
 
 LEFT = 0
@@ -322,8 +321,7 @@ init_player
     neg.w   d0
     move.w  d0,h_speed(a0)
     clr.w   v_speed(a0)
-    clr.w   h_turn(a0)
-    clr.w   v_turn(a0)
+    clr.w   prepost_turn(a0)
     move.w  #0,frame(a0)
     move.w  #50,ready_timer
 	rts	    
@@ -365,12 +363,12 @@ draw_debug
     ; dir
     move.w  #232+8,d0
     add.w  #8,d1
-    lea .dir(pc),a0
+    lea .preturn(pc),a0
     bsr write_string
     lsl.w   #3,d0
     add.w  #232+8,d0
     clr.l   d2
-    move.w direction(a2),d2
+    move.w prepost_turn(a2),d2
     move.w  #0,d3
     bsr write_decimal_number
     rts
@@ -381,8 +379,8 @@ draw_debug
         dc.b    "PY ",0
 .frame
         dc.b    "FR ",0
-.dir
-        dc.b    "DI ",0
+.preturn
+        dc.b    "PT ",0
 draw_all
     lea player(pc),a2
     move.w  direction(a2),d0
@@ -718,7 +716,7 @@ level3_interrupt:
     beq.b   .blitter
     ; copper
     bsr draw_all
-    ;; bsr draw_debug
+    ;bsr draw_debug
     tst.w   ready_timer
     bne.b   .wait
     bsr update_all
@@ -748,9 +746,6 @@ mouse:
 ; args: none
 ; trashes: potentially all registers
 
-; TODO: up or down + left misses turn
-; but OK on right!!
-
 update_all
     ; power dot blink timer
     subq.w  #1,power_dot_timer
@@ -759,12 +754,13 @@ update_all
 .no_reload
     ; player
     lea player(pc),a4
+    ; pre turn timer
+    tst.w  prepost_turn(a4)
+    beq.b   .ptzero
+    subq.w  #1,prepost_turn(a4)
+.ptzero
     move.l  joystick_state(pc),d0
-    tst.w  v_turn(a4)
-    beq.b   .read_horiz
-    subq.w  #1,v_turn(a4)
-    bra.b   .vertical
-.read_horiz
+
     btst    #JPB_BTN_RIGHT,d0
     beq.b   .no_right
     move.w  player_speed(pc),h_speed(a4)
@@ -776,11 +772,6 @@ update_all
     neg.w   d1
     move.w  d1,h_speed(a4)  
 .vertical
-    tst.w  h_turn(a4)
-    beq.b   .read_vert
-    subq.w  #1,h_turn(a4)
-    bra.b   .out
-.read_vert
     btst    #JPB_BTN_UP,d0
     beq.b   .no_up
     move.w  player_speed(pc),d1
@@ -796,15 +787,101 @@ update_all
     ; cache xy in regs / save them
     move.w  xpos(a4),d2
     move.w  ypos(a4),d3
-    move.w   h_speed(a4),d5 ; save hspeed for horiz pass 2
-    ; pass 1: horizontal move
+
+    move.w  direction(a4),d6
+
+    cmp.w   #UP,d6
+    bcc.b   .horiz_first
+    ; priority to vertical move (direction change)
+    ; if pre/post turn in progress don't try to turn
+    tst.w   prepost_turn(a4)
+    bne.b .novtest1
+
+    bsr.b .vtest    
+.novtest1
+    bra.b .htest
+.horiz_first
+    ; priority to horizontal move
+    tst.w   prepost_turn(a4)
+    bne.b .nohtest1
+   bsr .htest
+.nohtest1    
+    ;;bra .vtest
+
+.vtest
+    ; vertical move
+    ; re-set coords
     move.w  d2,d0
     move.w  d3,d1
+    move.w  v_speed(a4),d4
+    ; now check if speeds are applicable to player
+    beq.b   .no_vmove
+    ; are we x-aligned?
+    and.w   #$F8,d0
+    add.w   #4,d0
+
+    ; are we y-aligned?
+    move.w  d0,d5   ; save d1 (aligned) into d5
+    sub.w   d2,d0
+    addq.w  #4,d0
+    ; d1 must be between 0 and 7 for pre-post turn
+    bmi.b   .no_vmove
+    cmp.w   #8,d0
+    bcc.b   .no_vmove
+
+    move.w  d5,d0   ; restore d0
+    
+    tst d4
+    bmi.b   .to_up
+    move.w  #DOWN,d6
+    add.w  #4,d1
+    bra.b   .contv
+.to_up
+    move.w  #UP,d6
+    sub.w  #5,d1
+.contv
+    bsr collides_with_maze
+    tst.b d0
+    beq.b   .can_move_vertically
+    ; cancel speed, note the turn
+    clr.w   v_speed(a4)
+    bra.b   .no_vmove
+.can_move_vertically
+    move.w  d6,direction(a4)
         
+    cmp.w   xpos(a4),d5
+    beq.b   .ddv
+    move.w  #PREPOST_TURN_LOCK,prepost_turn(a4)
+.ddv
+    
+    add.w   d4,d3
+    move.w  d5,xpos(a4)
+    move.w  d3,ypos(a4)
+
+    bsr .animate
+    clr.w   h_speed(a4)
+.no_vmove
+    rts
+    
+.htest
+    move.w  d2,d0
+    move.w  d3,d1
     move.w  h_speed(a4),d4
     ; now check if speeds are applicable to player
     beq.b   .no_hmove
-    
+    ; are we y-aligned?
+    and.w   #$F8,d1
+    add.w   #4,d1
+    move.w  d1,d5   ; save d1 (aligned) into d5
+    sub.w   d3,d1
+    addq.w  #4,d1
+    ; d1 must be between 0 and 7 for pre-post turn
+    bmi.b   .no_hmove
+    cmp.w   #8,d1
+    bcc.b   .no_hmove
+
+    move.w  d5,d1   ; restore d1
+    tst d4
     bmi.b   .to_left
     move.w  #RIGHT,d6
     add.w  #4,d0
@@ -823,100 +900,20 @@ update_all
     ; set direction
     move.w  d6,direction(a4)
     
+    ; set aligned value in y (corner cut)
+    cmp.w   ypos(a4),d5
+    beq.b   .dd
+    move.w  #PREPOST_TURN_LOCK,prepost_turn(a4)
+.dd
     add.w   d4,d2
     move.w  d2,xpos(a4)
+    move.w  d5,ypos(a4)
     bsr .animate
+    clr.w   v_speed(a4)
+
 .no_hmove
-    ; pass 2: vertical move
-    ; re-set coords
-    move.w  d2,d0
-    move.w  d3,d1
-    move.w  v_speed(a4),d4
-    ; now check if speeds are applicable to player
-    beq.b   .no_vmove
-    
-    bmi.b   .to_up
-    move.w  #DOWN,d6
-    add.w  #4,d1
-    bra.b   .contv
-.to_up
-    move.w  #UP,d6
-    sub.w  #5,d1
-.contv
-    bsr collides_with_maze
-    tst.b d0
-    beq.b   .can_move_vertically
-    ; cancel speed, note the turn
-    clr.w   v_speed(a4)
-    bra.b   .no_hmove2
-.can_move_vertically
-    move.w  d6,direction(a4)
-
-    tst.w   h_speed(a4)
-    beq.b   .no_horiz
-    move.w  #3,v_turn(a4)
-    move.w  #$F00,$DFF180    
-    ; cancel previous horiz speed if could move vertically
-    clr.w   h_speed(a4)
-.no_horiz
-    add.w   d4,d3
-    move.w  d3,ypos(a4)
-    bsr .animate
-    tst.w  v_turn(a4)
-    bne.b   .no_hmove2
-    ; now maybe that hmove is possible
-    ; pass 3: horizontal move adter successful vertical move
-    move.w  d2,d0
-    move.w  d3,d1
-        
-    move.w  d5,d4   ; check saved hspeed
-    ; now check if speeds are applicable to player
-    beq.b   .no_hmove2
-    
-    bmi.b   .to_left2
-    move.w  #RIGHT,d6
-    add.w  #4,d0
-    bra.b   .conth2
-.to_left2
-    move.w  #LEFT,d6
-    sub.w  #5,d0
-.conth2
-    bsr collides_with_maze
-    tst.b d0
-    beq.b   .can_move_horizontally2
-    ; cancel speed
-    clr.w   h_speed(a4)
-    bra.b   .no_hmove2
-.can_move_horizontally2
-    ; cancel previous vertical speed if could move horizontally
-    move.w  #3,h_turn(a4)
-    ;;move.w  #$0F0,$DFF180
-    clr.w   v_speed(a4)
-    ; re-set hspeed
-    move.w   d5,h_speed(a4)
-    ;move.w  d6,direction(a4)
-
-    add.w   d4,d2
-    move.w  d2,xpos(a4)
-    bsr .animate
-.no_hmove2    
-.no_vmove
-    ; in the end, align pacman depending on direction
-    move.w  direction(a4),d6
-    move.w  #ypos,d5
-    cmp.w   #LEFT,d6
-    beq.b   .horiz
-    cmp.w   #RIGHT,d6
-    beq.b   .horiz
-    move.w  #xpos,d5
-.horiz
-    move.w  (a4,d5.w),d4
-    and.w   #$F8,d4
-    add.w   #4,d4
-    move.w  d4,(a4,d5.w)
     rts
-    
-    
+
     
 .animate
     addq.w  #1,frame(a4)
