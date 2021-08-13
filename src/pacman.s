@@ -74,22 +74,33 @@ MAZE_PLANE_SIZE = NB_BYTES_PER_LINE*NB_LINES
 SCREEN_PLANE_SIZE = 40*NB_LINES
 NB_PLANES   = 4
 
-NB_TILES_PER_LINE = 28
+NB_TILES_PER_LINE = 2+28+2    ; 2 fake tiles in the start & end
 NB_TILE_LINES = 31
 NB_LINES = NB_TILE_LINES*8
 
+MAZE_BLINK_TIME = 80    ; 80*20 ms = 1,6 second
+
+X_START = 16
+
 RED_YSTART_POS = 96
-RED_XSTART_POS = 112
+RED_XSTART_POS = 112+X_START
 OTHERS_XSTART_POS = RED_YSTART_POS+24
 
 BLINK_RATE = 20  ; for powerdots
 PREPOST_TURN_LOCK = 4
 
+DOT_PLANE_OFFSET = SCREEN_PLANE_SIZE*2-(X_START/8)
 
 LEFT = 0
 RIGHT = 1<<2
 UP = 2<<2
 DOWN = 3<<2
+
+; states, 2 by 2, starting by 0
+
+STATE_PLAYING = 0
+STATE_GAME_OVER = 1*2
+STATE_LEVEL_COMPLETED = 2*2
 
 ; write current PC value to some address
 LOGPC:MACRO
@@ -106,6 +117,15 @@ mul\1_table
 	endr
     ENDM
     
+ADD_XY_TO_A1:MACRO
+    lea mul40_table(pc),\1
+    add.w   d1,d1
+    lsr.w   #3,d0
+    move.w  (\1,d1.w),d1
+    add.w   d0,a1       ; plane address
+    add.w   d1,a1       ; plane address
+    ENDM
+
     
 Start:
     lea  _custom,a5
@@ -223,15 +243,13 @@ Start:
 
     move.w #$C038,intena(a5)
     
-    ; start game
-; < A0: data (16x16)
-; < A1: plane
-; < D0: X
-; < D1: Y
-       
-	; now sprite test
-	bsr		mouse
-    
+.mainloop
+    btst    #6,$bfe001
+    beq.b   .out
+    tst.w   current_state
+    beq.b   .mainloop
+.out
+      
     ; quit
     bsr     restore_interrupts
 			      
@@ -312,7 +330,7 @@ init_ghosts
     
 init_player
     lea player(pc),a0
-	move.w  #112,xpos(a0)
+	move.w  #RED_XSTART_POS,xpos(a0)
 	move.w	#188,ypos(a0)
 	move.w 	#LEFT,direction(a0)
     ; temp depends on difficulty level
@@ -324,12 +342,13 @@ init_player
     clr.w   prepost_turn(a0)
     move.w  #0,frame(a0)
     move.w  #50,ready_timer
+    move.w  #STATE_PLAYING,current_state
 	rts	    
 
 draw_debug
     lea player(pc),a2
     move.w  #232+8,d0
-    move.w  #60,d1
+    move.w  #68,d1
     lea	screen_data+SCREEN_PLANE_SIZE*3,a1 
     lea .px(pc),a0
     bsr write_string
@@ -337,7 +356,7 @@ draw_debug
     add.w  #232+8,d0
     clr.l   d2
     move.w xpos(a2),d2
-    move.w  #3,d3
+    move.w  #5,d3
     bsr write_decimal_number
     move.w  #232+8,d0
     add.w  #8,d1
@@ -348,20 +367,9 @@ draw_debug
     clr.l   d2
     move.w ypos(a2),d2
     move.w  #3,d3
+    move.l  d0,d4
     bsr write_decimal_number
-   ; frame
-    move.w  #232+8,d0
-    add.w  #8,d1
-    lea .frame(pc),a0
-    bsr write_string
-    lsl.w   #3,d0
-    add.w  #232+8,d0
-    clr.l   d2
-    move.w frame(a2),d2
-    move.w  #0,d3
-    bsr write_decimal_number
-    ; dir
-    move.w  #232+8,d0
+    move.l  d4,d0
     add.w  #8,d1
     lea .preturn(pc),a0
     bsr write_string
@@ -377,11 +385,47 @@ draw_debug
         dc.b    "PX ",0
 .py
         dc.b    "PY ",0
-.frame
-        dc.b    "FR ",0
 .preturn
         dc.b    "PT ",0
-draw_all
+draw_all    
+    move.w  current_state(pc),d0
+    lea     .case_table(pc),a0
+    move.l     (a0,d0.w),a0
+    jmp (a0)
+.case_table
+    dc.l    .playing
+    dc.l    .game_over
+    dc.l    .level_completed
+.game_over
+    lea	screen_data+SCREEN_PLANE_SIZE,a1
+    move.w  #72,d0
+    move.w  #136,d1
+    lea game_over_string(pc),a0
+    bsr write_string
+    lea	screen_data+SCREEN_PLANE_SIZE*3,a1
+    move.w  #72,d0
+    move.w  #136,d1
+    bsr write_string
+    bra.b   .draw_complete
+.level_completed
+.playing
+    tst.w   ready_timer
+    beq.b   .ready_off
+    lea	screen_data+SCREEN_PLANE_SIZE,a1
+    move.w  #88,d0
+    move.w  #136,d1
+    cmp.w   #1,ready_timer
+    bne.b   .still_ready
+    ; remove "READY!" message
+    move.w  #14,d2   ; 96
+    bsr clear_plane_any
+    bra.b   .ready_off
+.still_ready        
+    lea ready_string(pc),a0
+    bsr write_string
+    ;;bra.b   .draw_complete
+.ready_off
+    ; draw pacman
     lea player(pc),a2
     move.w  direction(a2),d0
     lea  pac_dir_table(pc),a0
@@ -395,8 +439,17 @@ draw_all
     move.w  xpos(a2),d0
     move.w  ypos(a2),d1
     ; center => top left
-    subq.w  #8,d0
+    moveq.l #-1,d2 ; mask
     subq.w  #8,d1
+    sub.w  #8+X_START,d0
+    bpl.b   .full
+    ; d0 is negative
+    neg.w   d0
+    lsr.l   d0,d2
+    neg.w   d0
+    add.w   #NB_BYTES_PER_LINE*8,d0
+    subq.w  #1,d1
+.full
     bsr blit_plane
     ; A1 is start of dest, use it to clear upper part and lower part
     ; and possibly shifted to the left/right
@@ -418,7 +471,7 @@ draw_all
     move.w  xpos(a0),d0
     move.w  ypos(a0),d1
     ; center => top left
-    subq.w  #8,d0
+    sub.w  #8+X_START,d0
     subq.w  #8,d1
     bsr store_sprite_pos    
     
@@ -438,32 +491,17 @@ draw_all
     dbf d7,.gloop
     
     
-    tst.w   ready_timer
-    beq.b   .no_ready
-    lea	screen_data+SCREEN_PLANE_SIZE,a1
-    move.w  #88,d0
-    move.w  #136,d1
-    
-    subq.w  #1,ready_timer    
-    bne.b   .still_ready
-    ; remove "READY!" message
-    move.w  #14,d2   ; 96
-    bsr clear_plane_any
-    bra.b   .no_ready
-.still_ready        
-    lea ready_string(pc),a0
-    bsr write_string
-.no_ready
-    tst.w   ready_timer
-    bne.b   .anim_done
     ; timer not running, animate
     move.w  power_dot_timer(pc),d0
     bne.b   .nospd
     lea  powerdots(pc),a0
     moveq.l #3,d0
 .drawpdloop
-    move.l  (a0)+,a1
+    move.l  (a0)+,d1 
+    beq.b   .zap_draw
+    move.l  d1,a1
     bsr draw_power_dot
+.zap_draw    
     dbf d0,.drawpdloop
     bra.b   .powerdot_done
 .nospd
@@ -472,12 +510,30 @@ draw_all
     lea  powerdots(pc),a0
     moveq.l #3,d0
 .clrpdloop
-    move.l  (a0)+,a1
+    move.l  (a0)+,d1
+    beq.b   .zap_clear
+    move.l  d1,a1
     bsr clear_power_dot
+.zap_clear    
     dbf d0,.clrpdloop
 .powerdot_done
 
-.anim_done
+
+    ; score
+    lea	screen_data+SCREEN_PLANE_SIZE*3,a1  ; white
+    
+    move.l  score,d0
+    cmp.l   displayed_score,d0
+    beq.b   .no_score_update
+    move.l  d0,d2
+    move.l  d0,displayed_score
+    move.w  #232+16,d0
+    move.w  #24,d1
+    move.w  #6,d3
+    bsr write_decimal_number
+    
+.no_score_update
+.draw_complete
     rts
 
 ; what: clears a plane of any width (ATM not using blitter)
@@ -527,6 +583,7 @@ draw_lives_and_bonuses:
     beq.b   .out
     bmi.b   .out
     move.w #NB_BYTES_PER_MAZE_LINE*8,d3
+    moveq.l #-1,d2  ; mask
 .lloop
     lea	screen_data+SCREEN_PLANE_SIZE,a1
     move.w  d3,d0
@@ -545,6 +602,9 @@ draw_lives_and_bonuses:
     rts
     
 draw_maze:    
+    move.w  colors+6,maze_color     ; save original maze color
+    move.w  #MAZE_BLINK_TIME,maze_blink_timer
+    move.b  #4,maze_blink_nb_times
     ; copy maze data in bitplanes
     lea maze_data(pc),a0
     lea screen_data,a1
@@ -587,13 +647,13 @@ draw_bounds
 .next
     addq.l  #1,a1
     dbf d1,.loopx
-    add.l  #NB_BYTES_PER_LINE-NB_BYTES_PER_MAZE_LINE,a1
+    add.l  #NB_BYTES_PER_LINE-NB_TILES_PER_LINE,a1
     add.l   #NB_BYTES_PER_LINE*7,a1
     dbf d0,.loopy
     rts
 draw_dots:
     ; draw pen gate
-    lea	screen_data+(RED_YSTART_POS+5)*NB_BYTES_PER_LINE+RED_XSTART_POS/8-1,a1
+    lea	screen_data+(RED_YSTART_POS+5)*NB_BYTES_PER_LINE+(RED_XSTART_POS-X_START)/8-1,a1
     moveq.l #-1,d0
     move.w  d0,(a1)
     move.w  d0,(NB_BYTES_PER_LINE,a1)
@@ -612,7 +672,7 @@ draw_dots:
     dbf d0,.copy
 
     lea dot_table,a0
-    lea	screen_data+SCREEN_PLANE_SIZE*2,a1
+    lea	screen_data+DOT_PLANE_OFFSET,a1
     
     move.w  #NB_TILE_LINES-1,d0    
 .loopy
@@ -633,7 +693,7 @@ draw_dots:
 .next
     addq.l  #1,a1
     dbf d1,.loopx
-    add.l  #NB_BYTES_PER_LINE-NB_BYTES_PER_MAZE_LINE,a1
+    add.l  #NB_BYTES_PER_LINE-NB_TILES_PER_LINE,a1
     add.l   #NB_BYTES_PER_LINE*7,a1
     dbf d0,.loopy
     rts
@@ -660,6 +720,12 @@ clear_power_dot
     clr.b  (NB_BYTES_PER_LINE*5,a1)
     clr.b  (NB_BYTES_PER_LINE*6,a1)
     clr.b  (NB_BYTES_PER_LINE*7,a1)
+    rts
+
+; < A1 address
+clear_dot
+    clr.b  (NB_BYTES_PER_LINE*3,a1)
+    clr.b  (NB_BYTES_PER_LINE*4,a1)
     rts
     
 init_interrupts
@@ -716,11 +782,9 @@ level3_interrupt:
     beq.b   .blitter
     ; copper
     bsr draw_all
-    ;bsr draw_debug
-    tst.w   ready_timer
-    bne.b   .wait
+    bsr draw_debug
     bsr update_all
-.wait
+
     move.w  #$0010,(intreq,a5) 
     movem.l (a7)+,d0-a6
     rte    
@@ -747,6 +811,48 @@ mouse:
 ; trashes: potentially all registers
 
 update_all
+    move.w  current_state(pc),d0
+    lea     .case_table(pc),a0
+    move.l     (a0,d0.w),a0
+    jmp (a0)
+.case_table
+    dc.l    .playing
+    dc.l    .game_over
+    dc.l    .level_completed
+.level_completed
+    subq.w  #1,maze_blink_timer
+    bne.b   .no_change
+    move.w  #MAZE_BLINK_TIME,maze_blink_timer
+    subq.b  #1,maze_blink_nb_times
+    beq.b   .next_level
+    cmp.w  #$FFF,colors+6
+    beq.b   .orig
+    move.w  maze_color,d0
+    bra.b   .chcol
+.orig
+    move.w  #$FFF,d0
+.chcol
+    move.w  d0,colors+6
+.no_change
+    rts
+.next_level
+     ;;move.w  #STATE_PLAYING,current_state
+     move.w #50,ready_timer
+     rts
+     
+.game_over
+    rts
+.playing
+    tst.w   ready_timer
+    beq.b   .ready_off
+    subq.w  #1,ready_timer
+    rts
+.ready_off
+    bsr update_pac
+    
+    rts
+    
+update_pac
     ; power dot blink timer
     subq.w  #1,power_dot_timer
     bpl.b   .no_reload
@@ -799,15 +905,71 @@ update_all
 
     bsr.b .vtest    
 .novtest1
-    bra.b .htest
+    bsr.b .htest
+    bra.b   .pills
 .horiz_first
     ; priority to horizontal move
     tst.w   prepost_turn(a4)
     bne.b .nohtest1
-   bsr .htest
+    bsr .htest
 .nohtest1    
-    ;;bra .vtest
+    bsr.b .vtest
+.pills
+    move.w  xpos(a4),d0
+    move.w  ypos(a4),d1
+    bsr is_on_bonus
+    move.b   d0,d2
+    beq.b   .end_pac
 
+    lea	screen_data+DOT_PLANE_OFFSET,a1
+    move.w  xpos(a4),d0
+    move.w  ypos(a4),d1
+    ; are we x-aligned?
+    and.w   #$F8,d1
+    ADD_XY_TO_A1    a0
+
+    cmp.b   #1,d2
+    beq.b   .simple
+    cmp.b   #2,d2
+    beq.b   .power
+    ; bonus (fruit)
+    bra.b   .score
+.power
+    ; linear search find the relevant powerdot
+    lea  powerdots(pc),a0
+    moveq.l #3,d0
+.clrpdloop
+    move.l  (a0)+,d1
+    beq.b   .zap_clear
+    cmp.l  d1,a1
+    bne.b   .clrpdloop
+    bsr clear_power_dot
+    clr.l   (-4,a0)
+    bra.b   .score  ; found
+.zap_clear
+    dbf d0,.clrpdloop
+    ; should not happen!!
+    bra.b   .score
+.simple
+    bsr clear_dot
+.score
+    and.w   #$FF,d2
+    cmp.w   #3,d2
+    bcc.b   .other
+    ; dot
+    subq.b  #1,nb_dots_to_clear
+    bne.b   .other
+    ; no more dots: win
+    move.w  #STATE_LEVEL_COMPLETED,current_state
+.other
+    lea score_table(pc),a0
+    move.b  (a0,d2.w),d0
+    ext.w   d0
+    ext.l   d0
+    add.l   d0,score
+.end_pac
+    rts
+    
 .vtest
     ; vertical move
     ; re-set coords
@@ -905,7 +1067,18 @@ update_all
     beq.b   .dd
     move.w  #PREPOST_TURN_LOCK,prepost_turn(a4)
 .dd
+    ; handle tunnel
     add.w   d4,d2
+    bpl.b   .positive
+    ; warp to right
+    
+    move.w  #NB_TILES_PER_LINE*8,d2
+    bra.b   .setx    
+.positive
+    cmp.w   #NB_TILES_PER_LINE*8,d2
+    bcs.b   .setx
+    clr.w   d2   ; warp to left
+.setx
     move.w  d2,xpos(a4)
     move.w  d5,ypos(a4)
     bsr .animate
@@ -962,6 +1135,30 @@ ye  set ys+16       ; size = 16
     dc.b  ys&255, 0, ye&255, ((ys>>6)&%100) | ((ye>>7)&%10)
   endr
 
+
+; what: checks if x,y has a dot/fruit/power pill 
+; args:
+; < d0 : x (screen coords)
+; < d1 : y
+; > d0 : nonzero (1,2,3) if collision (dot,power pill,fruit), 0 if no collision
+; trashes: a0,a1,d1
+
+is_on_bonus:
+    lea dot_table,a0
+    ; apply x,y offset
+    lsr.w   #3,d1       ; 8 divide
+    lsl.w   #5,d1       ; times 32
+    add.w   d1,a0
+    lsr.w   #3,d0   ; 8 divide
+    add.w   d0,a0
+    move.b  (a0),d0
+    bne.b   .pill
+    rts
+.pill
+    ; only once!
+    clr.b   (a0)
+    rts
+
 ; what: checks if x,y collides with maze 
 ; args:
 ; < d0 : x (screen coords)
@@ -971,16 +1168,15 @@ ye  set ys+16       ; size = 16
 
 collides_with_maze:
     lea wall_table,a0
-    lea mul28_table(pc),a1
-    ; apply x,y offset    
+    ; apply x,y offset
     lsr.w   #3,d1       ; 8 divide
-    add.w   d1,d1       ; times 2
-    add.w  (a1,d1.w),a0
+    lsl.w   #5,d1       ; times 32
+    add.w   d1,a0
     lsr.w   #3,d0   ; 8 divide
     move.b  (a0,d0.w),d0
     rts
-  
-    MUL_TABLE   28
+
+    
     MUL_TABLE   40
 
 ; what: blits 16x16 data on one plane
@@ -989,11 +1185,13 @@ collides_with_maze:
 ; < A1: plane
 ; < D0: X
 ; < D1: Y
+; < D2: blit mask
 ; trashes: D0-D1
 ; returns: A1 as start of destination (A1 = orig A1+40*D1+D0/8)
 
 blit_plane
     movem.l d2-d4/a2-a5,-(a7)
+    move.l  d2,d3
     move.w  #4,d2       ; 16 pixels + 2 shift bytes
     bsr blit_plane_any_internal
     movem.l (a7)+,d2-d4/a2-a5
@@ -1006,6 +1204,7 @@ blit_plane
 ; < D0: X
 ; < D1: Y
 ; < D2: blit width in bytes (+2)
+; < D3: blit mask
 ; trashes: D0-D1, A1
 
 blit_plane_any:
@@ -1019,6 +1218,7 @@ blit_plane_any_internal:
 blith = 16
 
     lea $DFF000,A5
+	move.l d3,bltafwm(a5)	;no masking of first/last word
     ; pre-compute the maximum shit here
     lea mul40_table(pc),a2
     add.w   d1,d1
@@ -1029,7 +1229,7 @@ blith = 16
     move    d0,d3
 
     and.w   #$F,D3
-    and.w   #$F0,d0
+    and.w   #$1F0,d0
     lsr.w   #3,d0
     add.w   d0,d1
     add.l   d1,a1       ; plane position
@@ -1051,7 +1251,6 @@ blith = 16
 
     ; always the same settings (ATM)
 	move.w #0,bltamod(a5)		;A modulo=bytes to skip between lines
-	move.l #$ffffffff,bltafwm(a5)	;no masking of first/last word
 	move.l d4,bltcon0(a5)	
 
     ; now just wait for blitter ready to write all registers
@@ -1137,7 +1336,7 @@ write_hexadecimal_number
     bmi.b   .w
     subq    #1,d3
 .pad
-    move.b  #'0',-(a0)
+    move.b  #' ',-(a0)
     dbf d3,.pad
 .w
     bra write_string
@@ -1214,6 +1413,8 @@ write_decimal_number
     ds.b    20
     dc.b    0
     even
+    
+    
 ; what: writes a text in a single plane
 ; args:
 ; < A0: c string
@@ -1224,13 +1425,8 @@ write_decimal_number
 
 write_string
     movem.l A0-A2/d1-D2,-(a7)
-    lsr.w   #3,d0
     clr.w   d2
-    lea mul40_table(pc),a2
-    add.w   d1,d1
-    move.w  (a2,d1.w),d1
-    add.w   d0,a1       ; plane address
-    add.w   d1,a1       ; plane address
+    ADD_XY_TO_A1    a2
     moveq.l #0,d0
 .loop
     move.b  (a0)+,d2
@@ -1284,14 +1480,28 @@ joystick_state
     dc.l    0
 ready_timer
     dc.w    0
+level_blink_timer
+    dc.w    0
+current_state
+    dc.w    0
 power_dot_timer:
     dc.w    BLINK_RATE
 score
     dc.l    0
+displayed_score
+    dc.l    0
 high_score
     dc.l    0
+maze_color
+    dc.w    0
+maze_blink_timer
+    dc.w    0
+maze_blink_nb_times
+    dc.b    0
 nb_lives
     dc.b    0
+
+
     even
 
     
@@ -1317,6 +1527,7 @@ pac_anim_\1_end
     PAC_ANIM_TABLE  right
     PAC_ANIM_TABLE  up
     PAC_ANIM_TABLE  down
+    
     
 maze_data:
     incbin  "maze.bin"
@@ -1368,69 +1579,77 @@ p1_string
     dc.b    "     1UP",0
 score_string
     dc.b    "       00",0
+game_over_string
+    dc.b    "GAME  OVER",0
 ready_string
     dc.b    "READY!",0
-    
+score_table
+    dc.b    0,1,5
+fruit_score
+    dc.b    $10
+nb_dots_to_clear
+    dc.b    244
 wall_table:
-    ; ------------------------------- MID -------------------------
-    dc.b    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
-    dc.b    1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1
+    ; ------OUT ------------------------- MID ------------------------- OUT
+    dc.b    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
+    dc.b    1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1
     REPT    3
-    dc.b    1,0,1,1,1,1,0,1,1,1,1,1,0,1,1,0,1,1,1,1,1,0,1,1,1,1,0,1
+    dc.b    1,1,1,0,1,1,1,1,0,1,1,1,1,1,0,1,1,0,1,1,1,1,1,0,1,1,1,1,0,1,1,1
     ENDR
-    dc.b    1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1
-    dc.b    1,0,1,1,1,1,0,1,1,0,1,1,1,1,1,1,1,1,0,1,1,0,1,1,1,1,0,1
-    dc.b    1,0,1,1,1,1,0,1,1,0,1,1,1,1,1,1,1,1,0,1,1,0,1,1,1,1,0,1
-    dc.b    1,0,0,0,0,0,0,1,1,0,0,0,0,1,1,0,0,0,0,1,1,0,0,0,0,0,0,1
-    dc.b    1,1,1,1,1,1,0,1,1,1,1,1,0,1,1,0,1,1,1,1,1,0,1,1,1,1,1,1
-    dc.b    1,1,1,1,1,1,0,1,1,1,1,1,0,1,1,0,1,1,1,1,1,0,1,1,1,1,1,1
-    dc.b    1,1,1,1,1,1,0,1,1,0,0,0,0,0,0,0,0,0,0,1,1,0,1,1,1,1,1,1
-    dc.b    1,1,1,1,1,1,0,1,1,0,1,1,1,1,1,1,1,1,0,1,1,0,1,1,1,1,1,1
-    dc.b    1,1,1,1,1,1,0,1,1,0,1,2,2,2,2,2,2,1,0,1,1,0,1,1,1,1,1,1
-    dc.b    0,0,0,0,0,0,0,0,0,0,1,2,2,2,2,2,2,1,0,0,0,0,0,0,0,0,0,0
-    dc.b    1,1,1,1,1,1,0,1,1,0,1,2,2,2,2,2,2,1,0,1,1,0,1,1,1,1,1,1
-    dc.b    1,1,1,1,1,1,0,1,1,0,1,1,1,1,1,1,1,1,0,1,1,0,1,1,1,1,1,1
-    dc.b    1,1,1,1,1,1,0,1,1,0,0,0,0,0,0,0,0,0,0,1,1,0,1,1,1,1,1,1
-    dc.b    1,1,1,1,1,1,0,1,1,0,1,1,1,1,1,1,1,1,0,1,1,0,1,1,1,1,1,1
-    dc.b    1,1,1,1,1,1,0,1,1,0,1,1,1,1,1,1,1,1,0,1,1,0,1,1,1,1,1,1
-    dc.b    1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1
-    dc.b    1,0,1,1,1,1,0,1,1,1,1,1,0,1,1,0,1,1,1,1,1,0,1,1,1,1,0,1
-    dc.b    1,0,1,1,1,1,0,1,1,1,1,1,0,1,1,0,1,1,1,1,1,0,1,1,1,1,0,1
-    dc.b    1,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,0,0,1
-    dc.b    1,1,1,0,1,1,0,1,1,0,1,1,1,1,1,1,1,1,0,1,1,0,1,1,0,1,1,1
-    dc.b    1,1,1,0,1,1,0,1,1,0,1,1,1,1,1,1,1,1,0,1,1,0,1,1,0,1,1,1    
-    dc.b    1,0,0,0,0,0,0,1,1,0,0,0,0,1,1,0,0,0,0,1,1,0,0,0,0,0,0,1
-    dc.b    1,0,1,1,1,1,1,1,1,1,1,1,0,1,1,0,1,1,1,1,1,1,1,1,1,1,0,1
-    dc.b    1,0,1,1,1,1,1,1,1,1,1,1,0,1,1,0,1,1,1,1,1,1,1,1,1,1,0,1
-    dc.b    1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1
-    dc.b    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
+    dc.b    1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1
+    dc.b    1,1,1,0,1,1,1,1,0,1,1,0,1,1,1,1,1,1,1,1,0,1,1,0,1,1,1,1,0,1,1,1
+    dc.b    1,1,1,0,1,1,1,1,0,1,1,0,1,1,1,1,1,1,1,1,0,1,1,0,1,1,1,1,0,1,1,1
+    dc.b    1,1,1,0,0,0,0,0,0,1,1,0,0,0,0,1,1,0,0,0,0,1,1,0,0,0,0,0,0,1,1,1
+    dc.b    1,1,1,1,1,1,1,1,0,1,1,1,1,1,0,1,1,0,1,1,1,1,1,0,1,1,1,1,1,1,1,1
+    dc.b    1,1,1,1,1,1,1,1,0,1,1,1,1,1,0,1,1,0,1,1,1,1,1,0,1,1,1,1,1,1,1,1
+    dc.b    1,1,1,1,1,1,1,1,0,1,1,0,0,0,0,0,0,0,0,0,0,1,1,0,1,1,1,1,1,1,1,1
+    dc.b    1,1,1,1,1,1,1,1,0,1,1,0,1,1,1,2,2,1,1,1,0,1,1,0,1,1,1,1,1,1,1,1
+    dc.b    1,1,1,1,1,1,1,1,0,1,1,0,1,2,2,2,2,2,2,1,0,1,1,0,1,1,1,1,1,1,1,1
+    dc.b    0,0,0,0,0,0,0,0,0,0,0,0,1,2,2,2,2,2,2,1,0,0,0,0,0,0,0,0,0,0,0,0
+    dc.b    1,1,1,1,1,1,1,1,0,1,1,0,1,2,2,2,2,2,2,1,0,1,1,0,1,1,1,1,1,1,1,1
+    dc.b    1,1,1,1,1,1,1,1,0,1,1,0,1,1,1,1,1,1,1,1,0,1,1,0,1,1,1,1,1,1,1,1
+    dc.b    1,1,1,1,1,1,1,1,0,1,1,0,0,0,0,0,0,0,0,0,0,1,1,0,1,1,1,1,1,1,1,1
+    dc.b    1,1,1,1,1,1,1,1,0,1,1,0,1,1,1,1,1,1,1,1,0,1,1,0,1,1,1,1,1,1,1,1
+    dc.b    1,1,1,1,1,1,1,1,0,1,1,0,1,1,1,1,1,1,1,1,0,1,1,0,1,1,1,1,1,1,1,1
+    dc.b    1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1
+    dc.b    1,1,1,0,1,1,1,1,0,1,1,1,1,1,0,1,1,0,1,1,1,1,1,0,1,1,1,1,0,1,1,1
+    dc.b    1,1,1,0,1,1,1,1,0,1,1,1,1,1,0,1,1,0,1,1,1,1,1,0,1,1,1,1,0,1,1,1
+    dc.b    1,1,1,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,0,0,1,1,1
+    dc.b    1,1,1,1,1,0,1,1,0,1,1,0,1,1,1,1,1,1,1,1,0,1,1,0,1,1,0,1,1,1,1,1
+    dc.b    1,1,1,1,1,0,1,1,0,1,1,0,1,1,1,1,1,1,1,1,0,1,1,0,1,1,0,1,1,1,1,1    
+    dc.b    1,1,1,0,0,0,0,0,0,1,1,0,0,0,0,1,1,0,0,0,0,1,1,0,0,0,0,0,0,1,1,1
+    dc.b    1,1,1,0,1,1,1,1,1,1,1,1,1,1,0,1,1,0,1,1,1,1,1,1,1,1,1,1,0,1,1,1
+    dc.b    1,1,1,0,1,1,1,1,1,1,1,1,1,1,0,1,1,0,1,1,1,1,1,1,1,1,1,1,0,1,1,1
+    dc.b    1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1
+    dc.b    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
     
-    ; 28x31
+    ; 32x31  -------------------------------------------------------OUT
 dot_table_read_only:
-    dc.b    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
-    dc.b    0,1,1,1,1,1,1,1,1,1,1,1,1,0,0,1,1,1,1,1,1,1,1,1,1,1,1,0
-    dc.b    0,1,0,0,0,0,1,0,0,0,0,0,1,0,0,1,0,0,0,0,0,1,0,0,0,0,1,0
-    dc.b    0,2,0,0,0,0,1,0,0,0,0,0,1,0,0,1,0,0,0,0,0,1,0,0,0,0,2,0
-    dc.b    0,1,0,0,0,0,1,0,0,0,0,0,1,0,0,1,0,0,0,0,0,1,0,0,0,0,1,0
-    dc.b    0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0
-    dc.b    0,1,0,0,0,0,1,0,0,1,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,0,1,0
-    dc.b    0,1,0,0,0,0,1,0,0,1,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,0,1,0
-    dc.b    0,1,1,1,1,1,1,0,0,1,1,1,1,0,0,1,1,1,1,0,0,1,1,1,1,1,1,0
+    dc.b    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+    dc.b    0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0
+    dc.b    0,0,0,1,0,0,0,0,1,0,0,0,0,0,1,0,0,1,0,0,0,0,0,1,0,0,0,0,1,0,0,0
+    dc.b    0,0,0,2,0,0,0,0,1,0,0,0,0,0,1,0,0,1,0,0,0,0,0,1,0,0,0,0,2,0,0,0
+    dc.b    0,0,0,1,0,0,0,0,1,0,0,0,0,0,1,0,0,1,0,0,0,0,0,1,0,0,0,0,1,0,0,0
+    dc.b    0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0
+    dc.b    0,0,0,1,0,0,0,0,1,0,0,1,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,0,1,0,0,0
+    dc.b    0,0,0,1,0,0,0,0,1,0,0,1,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,0,1,0,0,0
+    dc.b    0,0,0,1,1,1,1,1,1,0,0,1,1,1,1,0,0,1,1,1,1,0,0,1,1,1,1,1,1,0,0,0
     REPT    11
-    dc.b    0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0
+    dc.b    0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0
     ENDR
-    dc.b    0,1,1,1,1,1,1,1,1,1,1,1,1,0,0,1,1,1,1,1,1,1,1,1,1,1,1,0
-    dc.b    0,1,0,0,0,0,1,0,0,0,0,0,1,0,0,1,0,0,0,0,0,1,0,0,0,0,1,0
-    dc.b    0,1,0,0,0,0,1,0,0,0,0,0,1,0,0,1,0,0,0,0,0,1,0,0,0,0,1,0
-    dc.b    0,2,1,1,0,0,1,1,1,1,1,1,1,0,0,1,1,1,1,1,1,1,0,0,1,1,2,0
-    dc.b    0,0,0,1,0,0,1,0,0,1,0,0,0,0,0,0,0,0,1,0,0,1,0,0,1,0,0,0
-    dc.b    0,0,0,1,0,0,1,0,0,1,0,0,0,0,0,0,0,0,1,0,0,1,0,0,1,0,0,0
-    dc.b    0,1,1,1,1,1,1,0,0,1,1,1,1,0,0,1,1,1,1,0,0,1,1,1,1,1,1,0
-    dc.b    0,1,0,0,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,0,0,0,0,0,0,0,1,0
-    dc.b    0,1,0,0,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,0,0,0,0,0,0,0,1,0
-    dc.b    0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0
-    dc.b    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+    dc.b    0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0
+    dc.b    0,0,0,1,0,0,0,0,1,0,0,0,0,0,1,0,0,1,0,0,0,0,0,1,0,0,0,0,1,0,0,0
+    dc.b    0,0,0,1,0,0,0,0,1,0,0,0,0,0,1,0,0,1,0,0,0,0,0,1,0,0,0,0,1,0,0,0
+    dc.b    0,0,0,2,1,1,0,0,1,1,1,1,1,1,1,0,0,1,1,1,1,1,1,1,0,0,1,1,2,0,0,0
+    dc.b    0,0,0,0,0,1,0,0,1,0,0,1,0,0,0,0,0,0,0,0,1,0,0,1,0,0,1,0,0,0,0,0
+    dc.b    0,0,0,0,0,1,0,0,1,0,0,1,0,0,0,0,0,0,0,0,1,0,0,1,0,0,1,0,0,0,0,0
+    dc.b    0,0,0,1,1,1,1,1,1,0,0,1,1,1,1,0,0,1,1,1,1,0,0,1,1,1,1,1,1,0,0,0
+    dc.b    0,0,0,1,0,0,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,0,0,0,0,0,0,0,1,0,0,0
+    dc.b    0,0,0,1,0,0,0,0,0,0,0,0,0,0,1,0,0,1,0,0,0,0,0,0,0,0,0,0,1,0,0,0
+    dc.b    0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0
+    dc.b    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
 
+    even
 powerdots
     ds.l    4
     

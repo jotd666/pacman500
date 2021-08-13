@@ -12,9 +12,9 @@ bitplanelib.palette_image2raw(maze,r"../{}/maze.bin".format(sprites_dir),maze_pa
 # some key colors are located at a 2**n position
 # so they can be drawn with just one plane (pacman, white fonts)
 game_palette_txt = """
-     dc.w	$0000,$022f,$0ff0,$0fbf     ; black, maze blue, pac yellow, pen gate pink
-     dc.w   $FBB,$00ff,$04ba,$0d95,$0FFF,$0ddf    ; dot pink, whatever, whatever, whatever, white
-	 dc.w	$0edf,$0f00,$0fb5,$0fbb,$0F0,$04bf
+     dc.w	$0000,$022f,$0ff0,$0fbf     ; black (0), maze blue (1), pac yellow (2), pen gate pink
+     dc.w   $FBB,$00ff,$04ba,$0d95,$0FFF,$0ddf    ; dot pink (4), whatever, whatever, whatever, white (8), whatever
+	 dc.w	$0f00,$0edf,$0fb5,$0fbb,$0F0,$04bf   ; red (8+2)
      ; sprite palette 16-32
      ; red ghost
      dc.w	$0000,$0f00,$022f,$0edf
