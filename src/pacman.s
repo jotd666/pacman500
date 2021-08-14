@@ -75,14 +75,17 @@ SCREEN_PLANE_SIZE = 40*NB_LINES
 NB_PLANES   = 4
 
 NB_TILES_PER_LINE = 2+28+2    ; 2 fake tiles in the start & end
-NB_TILE_LINES = 31
+NB_TILE_LINES = 31+3    ; 3 fake tiles before the maze to simulate ghosts targets
 NB_LINES = NB_TILE_LINES*8
 
 MAZE_BLINK_TIME = 80    ; 80*20 ms = 1,6 second
 
 X_START = 16
+Y_START = 24
+; tunnel max
+X_MAX = (NB_TILES_PER_LINE-1)*8
 
-RED_YSTART_POS = 96
+RED_YSTART_POS = 96+Y_START
 RED_XSTART_POS = 112+X_START
 OTHERS_XSTART_POS = RED_YSTART_POS+24
 
@@ -150,9 +153,22 @@ Start:
     bsr init_interrupts
     move.w  #$7FFF,(intena,a5)
 
-    bsr init_player
+    ; global init at game start
     move.b  #3,nb_lives
+    move.w  #0,level_number
+    move.l  #0,score
+    move.l  #0,displayed_score
+    
+    ; level
+    move.w  level_number,d2
+    add.w   d2,d2
+    lea bonus_level_score(pc),a0
+    move.w  (a0,d2.w),fruit_score
+  
+    bsr init_player
 
+    ; do it first, as the last bonus overwrites bottom left of screen
+    bsr draw_lives_and_bonuses    
     bsr draw_maze
     ; for debug
     ;;bsr draw_bounds
@@ -177,7 +193,6 @@ Start:
     bsr write_string
     
     bsr draw_dots
-    bsr draw_lives_and_bonuses    
 
     bsr init_ghosts
     
@@ -331,7 +346,7 @@ init_ghosts
 init_player
     lea player(pc),a0
 	move.w  #RED_XSTART_POS,xpos(a0)
-	move.w	#188,ypos(a0)
+	move.w	#188+Y_START,ypos(a0)
 	move.w 	#LEFT,direction(a0)
     ; temp depends on difficulty level
     move.w  player_speed_table(pc),d0
@@ -440,16 +455,25 @@ draw_all
     move.w  ypos(a2),d1
     ; center => top left
     moveq.l #-1,d2 ; mask
-    subq.w  #8,d1
+    sub.w  #8+Y_START,d1
     sub.w  #8+X_START,d0
-    bpl.b   .full
+    bpl.b   .no_left
     ; d0 is negative
     neg.w   d0
     lsr.l   d0,d2
     neg.w   d0
     add.w   #NB_BYTES_PER_LINE*8,d0
     subq.w  #1,d1
-.full
+    bra.b   .pdraw
+.no_left
+    ; check mask to the right
+    move.w  d0,d4    
+    sub.w   #X_MAX-24-X_START,d4
+    bmi.b   .pdraw
+    lsl.l   d4,d2
+    swap    d2
+    clr.w   d2
+.pdraw
     bsr blit_plane
     ; A1 is start of dest, use it to clear upper part and lower part
     ; and possibly shifted to the left/right
@@ -472,7 +496,7 @@ draw_all
     move.w  ypos(a0),d1
     ; center => top left
     sub.w  #8+X_START,d0
-    subq.w  #8,d1
+    sub.w  #8+Y_START,d1
     bsr store_sprite_pos    
     
     move.l  frame_table(a0),a1
@@ -527,11 +551,21 @@ draw_all
     beq.b   .no_score_update
     move.l  d0,d2
     move.l  d0,displayed_score
+
     move.w  #232+16,d0
     move.w  #24,d1
     move.w  #6,d3
     bsr write_decimal_number
     
+    move.l  high_score,d4
+    cmp.l   d2,d4
+    bcc.b   .no_score_update
+    ; high score
+    move.l  d2,high_score
+    move.w  #232+16,d0
+    move.w  #24+32,d1
+    move.w  #6,d3
+    bsr write_decimal_number
 .no_score_update
 .draw_complete
     rts
@@ -575,7 +609,6 @@ draw_lives_and_bonuses:
     move.l  #8,d2
     bsr clear_plane_any
 
-    
     lea pac_lives,a0
     move.b  nb_lives(pc),d7
     ext     d7
@@ -592,13 +625,55 @@ draw_lives_and_bonuses:
     add.w   #16,d3
     dbf d7,.lloop
 .out
+
+    move.w #NB_BYTES_PER_MAZE_LINE*8,d0
+    move.w #248-32,d1
+    move.w  level_number,d2
+    move.w  #1,d4
+.dbloopy
+    move.w  #5,d3
+.dbloopx
+    bsr draw_bonus
+    subq.w  #1,d2
+    bmi.b   .outb
+    add.w   #16,d0
+    dbf d3,.dbloopx
+    move.w #NB_BYTES_PER_MAZE_LINE*8,d0
+    add.w   #16,d1
+    dbf d4,.dbloopy
+.outb
     ; TEMP
     lea	screen_data+SCREEN_PLANE_SIZE,a1
     move.l #NB_BYTES_PER_MAZE_LINE*8,d0
     moveq.l #0,d1
     move.l  #20,d2
     ;bsr clear_plane_any
+    
+    rts
+    
+; < D0: X
+; < D1: Y
+; < D2: level number
 
+draw_bonus
+    movem.l d0-d3/a0-a1,-(a7)
+    lea	screen_data,a1
+    cmp.w   #12,d2
+    bcs.b   .ok
+    move.w  #12,d2  ; maxed 
+.ok
+    add.w   d2,d2
+    lea bonus_level_table,a0
+    move.w  (a0,d2.w),d3      ; bonus index * 320
+    mulu.w  #10,d3
+    swap    d3
+    clr     d3
+    swap    d3
+    lsl.l   #5,d3
+    lea bonus_pics,a0
+    add.l   d3,a0    ; bonus bitplanes
+    bsr blit_4_planes
+    movem.l (a7)+,d0-d3/a0-a1
     rts
     
 draw_maze:    
@@ -653,7 +728,7 @@ draw_bounds
     rts
 draw_dots:
     ; draw pen gate
-    lea	screen_data+(RED_YSTART_POS+5)*NB_BYTES_PER_LINE+(RED_XSTART_POS-X_START)/8-1,a1
+    lea	screen_data+(RED_YSTART_POS-19)*NB_BYTES_PER_LINE+(RED_XSTART_POS-X_START)/8-1,a1
     moveq.l #-1,d0
     move.w  d0,(a1)
     move.w  d0,(NB_BYTES_PER_LINE,a1)
@@ -671,10 +746,12 @@ draw_dots:
     move.b  (a0)+,(a1)+
     dbf d0,.copy
 
-    lea dot_table,a0
+    ; start with an offset (skip the fake 3 first rows
+    lea dot_table+(Y_START/8)*NB_TILES_PER_LINE,a0
+    
     lea	screen_data+DOT_PLANE_OFFSET,a1
     
-    move.w  #NB_TILE_LINES-1,d0    
+    move.w  #NB_TILE_LINES-1-(Y_START/8),d0    
 .loopy
     move.w  #NB_TILES_PER_LINE-1,d1
 .loopx
@@ -924,8 +1001,9 @@ update_pac
     lea	screen_data+DOT_PLANE_OFFSET,a1
     move.w  xpos(a4),d0
     move.w  ypos(a4),d1
-    ; are we x-aligned?
-    and.w   #$F8,d1
+    ; are we y-aligned?
+    and.w   #$1F8,d1
+    sub.w   #Y_START,d1     ; phantom 3 rows of tiles at start
     ADD_XY_TO_A1    a0
 
     cmp.b   #1,d2
@@ -1032,7 +1110,7 @@ update_pac
     ; now check if speeds are applicable to player
     beq.b   .no_hmove
     ; are we y-aligned?
-    and.w   #$F8,d1
+    and.w   #$1F8,d1
     add.w   #4,d1
     move.w  d1,d5   ; save d1 (aligned) into d5
     sub.w   d3,d1
@@ -1071,11 +1149,10 @@ update_pac
     add.w   d4,d2
     bpl.b   .positive
     ; warp to right
-    
-    move.w  #NB_TILES_PER_LINE*8,d2
+    move.w  #X_MAX,d2
     bra.b   .setx    
 .positive
-    cmp.w   #NB_TILES_PER_LINE*8,d2
+    cmp.w   #X_MAX,d2
     bcs.b   .setx
     clr.w   d2   ; warp to left
 .setx
@@ -1263,26 +1340,27 @@ blith = 16
 	move.w  d3,bltsize(a5)	;rectangle size, starts blit
     rts
 
-; what: blits 16x16 data on 4 planes (for bonuses)
+; what: blits 16(32)x16 data on 4 planes (for bonuses)
 ; args:
-; < A0: data (widthx16)
+; < A0: data (16x16)
 ; < A1: plane
 ; < D0: X
 ; < D1: Y
 ; trashes: D0-D1
 
-blit_3_planes
-    movem.l d2/d5/a0-a1/a5,-(a7)
-    moveq.l #2,d5
+blit_4_planes
+    movem.l d2/d4-d5/a0-a1/a5,-(a7)
+    moveq.l #3,d5
 .loop
     movem.l d0-d1/a1,-(a7)
     move.w  #4,d2       ; 16 pixels + 2 shift bytes
+    moveq   #-1,d3      ; full mask
     bsr blit_plane_any_internal
     movem.l (a7)+,d0-d1/a1
     add.l   #SCREEN_PLANE_SIZE,a1
-    add.l   #64,a0
+    add.l   #64,a0      ; 32 but shifting!
     dbf d5,.loop
-    movem.l (a7)+,d2/d5/a0-a1/a5
+    movem.l (a7)+,d2/d4-d5/a0-a1/a5
     rts
     
 wait_blit
@@ -1405,7 +1483,7 @@ write_decimal_number
     bmi.b   .w
     subq    #1,d3
 .pad
-    move.b  #'0',-(a0)
+    move.b  #' ',-(a0)
     dbf d3,.pad
 .w
     bra write_string
@@ -1496,11 +1574,25 @@ maze_color
     dc.w    0
 maze_blink_timer
     dc.w    0
+fruit_score
+    dc.w    10
+bonus_level_table:
+    dc.w    0,1,2,2,3,3,4,4,5,5,6,6,7
+bonus_level_score:
+    dc.w    10,30,50,50,70,70,100,100,200,200,300,300,500
+
+; 0: level 1
+level_number
+    dc.w    0
 maze_blink_nb_times
     dc.b    0
 nb_lives
     dc.b    0
 
+score_table
+    dc.b    0,1,5
+nb_dots_to_clear
+    dc.b    244
 
     even
 
@@ -1583,13 +1675,50 @@ game_over_string
     dc.b    "GAME  OVER",0
 ready_string
     dc.b    "READY!",0
-score_table
-    dc.b    0,1,5
-fruit_score
-    dc.b    $10
-nb_dots_to_clear
-    dc.b    244
+
+
+; speed table at 60 Hz. Not compatible with 50 Hz if we want roughly same speed
+speed_table:  ; lifted from https://github.com/shaunlebron/pacman/blob/master/src/Actor.js
+                         ; LEVEL 1
+    dc.b   1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1 ; pac-man (normal)
+    dc.b   0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1 ; ghosts (normal)
+    dc.b   1,1,1,1,2,1,1,1,1,1,1,1,2,1,1,1 ; pac-man (fright)
+    dc.b   0,1,1,0,1,1,0,1,0,1,1,0,1,1,0,1 ; ghosts (fright)
+    dc.b   0,1,0,1,0,1,0,1,0,1,0,1,0,1,0,1 ; ghosts (tunnel)
+    dc.b   1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1 ; elroy 1
+    dc.b   1,1,1,1,1,1,1,1,2,1,1,1,1,1,1,1 ; elroy 2
+                                           ;
+                                           ; LEVELS 2-4
+    dc.b   1,1,1,1,2,1,1,1,1,1,1,1,2,1,1,1 ; pac-man (normal)
+    dc.b   1,1,1,1,1,1,1,1,2,1,1,1,1,1,1,1 ; ghosts (normal)
+    dc.b   1,1,1,1,2,1,1,1,1,2,1,1,1,1,2,1 ; pac-man (fright)
+    dc.b   0,1,1,0,1,1,0,1,1,0,1,1,0,1,1,1 ; ghosts (fright)
+    dc.b   0,1,1,0,1,0,1,0,1,1,0,1,0,1,0,1 ; ghosts (tunnel)
+    dc.b   1,1,1,1,2,1,1,1,1,1,1,1,2,1,1,1 ; elroy 1
+    dc.b   1,1,1,1,2,1,1,1,1,2,1,1,1,1,2,1 ; elroy 2
+                                           ;
+                                           ; LEVELS 5-20
+    dc.b   1,1,2,1,1,1,2,1,1,1,2,1,1,1,2,1 ; pac-man (normal)
+    dc.b   1,1,1,1,2,1,1,1,1,2,1,1,1,1,2,1 ; ghosts (normal)
+    dc.b   1,1,2,1,1,1,2,1,1,1,2,1,1,1,2,1 ; pac-man (fright) (N/A for levels 17, 19 & 20)
+    dc.b   0,1,1,1,0,1,1,1,0,1,1,1,0,1,1,1 ; ghosts (fright)  (N/A for levels 17, 19 & 20)
+    dc.b   0,1,1,0,1,1,0,1,0,1,1,0,1,1,0,1 ; ghosts (tunnel)
+    dc.b   1,1,2,1,1,1,2,1,1,1,2,1,1,1,2,1 ; elroy 1
+    dc.b   1,1,2,1,1,2,1,1,2,1,1,2,1,1,2,1 ; elroy 2
+                                           ;
+                                           ; LEVELS 21+
+    dc.b   1,1,1,1,2,1,1,1,1,1,1,1,2,1,1,1 ; pac-man (normal)
+    dc.b   1,1,1,1,2,1,1,1,1,2,1,1,1,1,2,1 ; ghosts (normal)
+    dc.b   0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 ; pac-man (fright) N/A
+    dc.b   0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 ; ghosts (fright)  N/A
+    dc.b   0,1,1,0,1,1,0,1,0,1,1,0,1,1,0,1 ; ghosts (tunnel)
+    dc.b   1,1,2,1,1,1,2,1,1,1,2,1,1,1,2,1 ; elroy 1
+    dc.b   1,1,2,1,1,2,1,1,2,1,1,2,1,1,2,1; elroy 2
+    
 wall_table:
+    REPT    3
+    dc.b    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
+    ENDR
     ; ------OUT ------------------------- MID ------------------------- OUT
     dc.b    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
     dc.b    1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1
@@ -1623,8 +1752,11 @@ wall_table:
     dc.b    1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1
     dc.b    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
     
-    ; 32x31  -------------------------------------------------------OUT
+    ; 32x34  -------------------------------------------------------OUT
 dot_table_read_only:
+    REPT    3
+    dc.b    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+    ENDR
     dc.b    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
     dc.b    0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,0,1,1,1,1,1,1,1,1,1,1,1,1,0,0,0
     dc.b    0,0,0,1,0,0,0,0,1,0,0,0,0,0,1,0,0,1,0,0,0,0,0,1,0,0,0,0,1,0,0,0
@@ -1731,8 +1863,9 @@ end_color_copper:
 
 
 
+; add small safety in case some blit goes beyond screen
 screen_data:
-    ds.b    SCREEN_PLANE_SIZE*NB_PLANES,0
+    ds.b    SCREEN_PLANE_SIZE*NB_PLANES+NB_BYTES_PER_LINE,0
 	
 
 
@@ -1760,15 +1893,17 @@ pac_dead
     incbin  "pac_dead_0.bin"
 pac_lives
     incbin  "pac_lives_0.bin"
-bonus:
+bonus_pics:
     incbin  "cherry.bin"
     incbin  "strawberry.bin"
-    incbin  "orange.bin"
+    incbin  "peach.bin"
     incbin  "apple.bin"
-    incbin  "melon.bin"
+    incbin  "grapes.bin"
     incbin  "galaxian.bin"
     incbin  "bell.bin"
     incbin  "key.bin" 
+
+
     
 DECL_GHOST:MACRO
 \1_ghost_frame_table:

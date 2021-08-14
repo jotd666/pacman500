@@ -50,7 +50,7 @@ def process_tiles():
 
 
 
-    name_dict = {"bonus_{}".format(i):n for i,n in enumerate(["cherry","strawberry","orange","apple","melon","galaxian","bell","key"])}
+    name_dict = {"bonus_{}".format(i):n for i,n in enumerate(["cherry","strawberry","peach","apple","grapes","galaxian","bell","key"])}
     # we first did that to get the palette but we need to control
     # the order of the palette
 
