@@ -72,6 +72,13 @@
    "start_x":0,
    "start_y":96
   },
+   {
+  "name":"scores",
+   "sprite_number":5,
+   "frames":4,
+   "start_x":0,
+   "start_y":128
+  },
   {
     "ignore" : true,
   "name":"orange_ghost",
@@ -80,6 +87,7 @@
    "start_x":0,
    "start_y":112
   },
+
  {
    "name":"bonus",
    "frames":8,
