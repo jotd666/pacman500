@@ -59,6 +59,8 @@ CIAAPRA = $BFE001
     APTR     copperlist_address
     UWORD    home_corner_xtile
     UWORD    home_corner_ytile
+    UWORD    target_xtile
+    UWORD    target_ytile
     UWORD    mode_timer     ; number of 1/50th to stay in the current mode
     UWORD    mode           ; current mode
     UWORD    mode_counter   ; 0: first scatter, 1: first attack, etc.
@@ -124,10 +126,23 @@ PREPOST_TURN_LOCK = 4
 
 DOT_PLANE_OFFSET = SCREEN_PLANE_SIZE*2-(X_START/8)
 
-LEFT = 0
-RIGHT = 1<<2
+; follows order of ghosts
+RIGHT = 0
+LEFT = 1<<2
 UP = 2<<2
 DOWN = 3<<2
+
+; possible directions, clockwise
+
+
+DIRB_RIGHT = 0
+DIRB_DOWN = 1
+DIRB_LEFT = 2
+DIRB_UP = 3
+DIRF_RIGHT = 1
+DIRF_DOWN = 1<<1
+DIRF_LEFT = 1<<2
+DIRF_UP = 1<<3
 
 ; states, 2 by 2, starting by 0
 
@@ -361,6 +376,8 @@ init_ghosts
 
     clr.w   h_speed(a0)
     clr.w   v_speed(a0)
+    clr.w   target_xtile(a0)
+    clr.w   target_ytile(a0)
     
     bsr     update_ghost_mode_timer
     move.w  #MODE_SCATTER,mode(a0)
@@ -376,18 +393,20 @@ init_ghosts
 	move.w  #RED_XSTART_POS,xpos(a0)
 	move.w	#RED_YSTART_POS,ypos(a0)
     move.w  #LEFT,direction(a0)
-    move.w  #3,frame(a0)
+    move.w  #8,frame(a0)
     move.l  #red_ghost_frame_table,frame_table(a0)
     move.w  #2,home_corner_xtile(a0)
     move.w  #0,home_corner_ytile(a0)
+    bsr     update_ghost_target
     move.w  #-1,h_speed(a0)
     ; pink ghost
     add.l   #Ghost_SIZEOF,a0
 	move.w  #RED_XSTART_POS,xpos(a0)
     move.w  #DOWN,direction(a0)
-    move.w  #6,frame(a0)
+    move.w  #0,frame(a0)
     move.l  #pink_ghost_frame_table,frame_table(a0)
     move.w  #(NB_TILES_PER_LINE-6),home_corner_xtile(a0)
+    bsr     update_ghost_target
     move.w  #0,home_corner_ytile(a0)
     move.w  #1,v_speed(a0)
 
@@ -395,27 +414,67 @@ init_ghosts
     ; cyan ghost
 	move.w  #(RED_XSTART_POS-16),xpos(a0)
     move.w  #UP,direction(a0)
-    move.w  #4,frame(a0)
+    move.w  #0,frame(a0)
     move.l  #cyan_ghost_frame_table,frame_table(a0)
     move.w  #0,home_corner_xtile(a0)
     move.w  #(NB_TILE_LINES+1),home_corner_ytile(a0) 
+    bsr update_ghost_target
     move.w  #-1,v_speed(a0)
     ; orange ghost
     add.l   #Ghost_SIZEOF,a0
 
 	move.w  #(RED_XSTART_POS+16),xpos(a0)
     move.w  #UP,direction(a0)
-    move.w  #4,frame(a0)
+    move.w  #0,frame(a0)
     move.l  #orange_ghost_frame_table,frame_table(a0)
     move.w  #(NB_TILES_PER_LINE-4),home_corner_xtile(a0)
     move.w  #(NB_TILE_LINES+1),home_corner_ytile(a0)
+    bsr update_ghost_target
     move.w  #-1,v_speed(a0)
 
     rts
 
 behaviour_table
-    dc.l    0,0,0,0     ; tbd
+    dc.l    red_chase,pink_chase,cyan_chase,orange_chase
 
+; < A0: ghost structure
+; < A1: player structure
+red_chase
+    ; simple: get player tile
+    move.w  xpos(a1),d0
+    move.w  ypos(a1),d1
+    lsr.w   #3,d0
+    lsr.w   #3,d1
+    move.w  d0,target_xtile(a0)
+    move.w  d1,target_ytile(a1)
+    rts
+pink_chase
+    rts
+orange_chase
+    rts
+cyan_chase
+    rts
+    
+; < A0: ghost structure
+; trashes: D0
+update_ghost_target
+    move.w  mode(a0),d0
+    cmp.w   #MODE_SCATTER,d0
+    beq.b   .scatter
+    cmp.w   #MODE_CHASE,d0
+    beq.b   .chase
+    ; fright: no update
+    rts
+.scatter:
+    move.l  home_corner_xtile(a0),target_xtile(a0)  ; hack copy x & y at once
+    rts
+.chase:
+    pea .next(pc)
+    move.l  behaviour(a0),-(a7)
+    rts
+.next
+    rts
+    
 ; < A0: ghost structure
 ; trashes: nothing
 update_ghost_mode_timer
@@ -499,6 +558,28 @@ ghost_debug
     move.w  mode(a2),d2
     move.w  #0,d3
     bsr write_decimal_number
+    
+    move.w  #DEBUG_X,d0
+    add.w  #8,d1
+    lea .dir(pc),a0
+    bsr write_string
+    lsl.w   #3,d0
+    add.w  #DEBUG_X,d0
+    clr.l   d2
+    move.w  direction(a2),d2
+    move.w  #0,d3
+    bsr write_decimal_number
+
+    move.w  #DEBUG_X,d0
+    add.w  #8,d1
+    lea .dir(pc),a0
+    bsr write_string
+    lsl.w   #3,d0
+    add.w  #DEBUG_X,d0
+    clr.l   d2
+    move.w  possible_directions,d2
+    move.w  #4,d3
+    bsr write_hexadecimal_number
     rts
 .gx
         dc.b    "GX ",0
@@ -508,7 +589,11 @@ ghost_debug
         dc.b    "MTIM ",0
 .mode
         dc.b    "MODE ",0
+.dir
+        dc.b    "DIR ",0
         even
+possible_directions
+        dc.w    0
         
 draw_debug
     lea player(pc),a2
@@ -690,8 +775,10 @@ draw_all
     
     move.l  frame_table(a0),a1
     move.w  frame(a0),d2
-    add.w   d2,d2
-    add.w   d2,d2
+    lsr.w   #2,d2   ; 8 divide to get 0,1, divide by 4 then mask after adding direction
+    add.w   direction(a0),d2     ; add 0,4,8,12 depending on direction
+    bclr    #0,d2   ; even
+    add.w   d2,d2       ; times 2
     move.l  (a1,d2.w),a1
     move.l  d0,(a1)     ; store control word
     move.l  a1,d2    
@@ -1160,52 +1247,187 @@ update_ghosts
     ; now ghost can move once or twice
     move.w  d0,d7
     subq.w  #1,d7
+.move_loop
+    move.w  frame(a4),d1
+    addq.w  #1,d1
+    and.w   #$F,d1
+    move.w  d1,frame(a4)
+ 
     move.w  xpos(a4),d0
     move.w  ypos(a4),d1
     move.w  d0,d2
     move.w  d1,d3
     lsr.w   #3,d2       ; 8 divide, now this is the tile
     lsr.w   #3,d3   ; 8 divide
-    move.w  d2,.prev_tile_x
-    move.w  d3,.prev_tile_y
-    move.w  d0,d2
-    move.w  d1,d3
-.move_loop
-    ; cache xy in regs / save them
-    move.w  xpos(a4),d2
-    move.w  ypos(a4),d3
-    LOGPC   100
-    bsr.b .ghtest
 
+    add.w  v_speed(a4),d1   
+    add.w  h_speed(a4),d0
+    bpl.b   .positive
+    ; handle tunnel warp for ghosts
+    move.w  #X_MAX,d0
+    bra.b   .setx
+.positive
+    cmp.w   #X_MAX,d0
+    bcs.b   .setx
+    clr.w   d0   ; warp to left
+.setx 
+    move.w  d0,d4
+    move.w  d1,d5
+    lsr.w   #3,d4       ; 8 divide, now this is the tile
+    lsr.w   #3,d5   ; 8 divide
+   
+    move.w  d0,xpos(a4)
+    move.w  d1,ypos(a4)
+    
+    cmp.w   d2,d4
+    bne.b   .tile_change
+    cmp.w   d3,d5
+    bne.b   .tile_change
+.next_ghost
     dbf d7,.move_loop
 .ghost_done
     rts
-   
-.gvtest
-    ; vertical move
-    ; re-set coords
+    
+.tile_change
+    ; now the tricky bit: decide where to go
+    ; first check for "direction change" signal
+    tst.b   direction_change(a4)
+    beq.b   .no_dirchange
+    clr.b   direction_change(a4)    ; ack
+    neg.w  h_speed(a4)
+    neg.w  v_speed(a4)
+    bsr    .set_direction_from_speed
+    bra.b   .next_ghost
+.no_dirchange
+
+    ; direction NOT changed, check objective if not fright mode
+    bsr .compute_possible_directions
+    move.w  d0,possible_directions  ; DEBUG
+    move.w  mode(a4),d0
+    cmp.w   #MODE_FRIGHT,d0
+    bne.b   .no_fright
+    ; fright mode: TODO
+    blitz
+    bra.b   .set_speed_vector
+.no_fright:
+    bsr update_ghost_target
+    ; try to select the best direction to reach the target
+    move.w  xpos(a4),d2
+    move.w  ypos(a4),d2
+    lsr.w   #3,d2
+    lsr.w   #3,d3
+    ; now it's time to check the possible tiles
+    ; and their distance to target
+    ; priority: up, left, down, right
+    move.w  target_xtile(a4),d4
+    move.w  target_ytile(a4),d5
+    moveq.l #-1,d7      ; max distance
+    btst    #DIRB_UP,d0
+    beq.b   .no_test_up
+    subq.w  #1,d5   ; tile up
+    bsr .compute_square_distance
+    move.l   d6,d7              ; store min distance (only one distance computed)
+    move.w  #UP,direction(a4)
+.no_test_up
+    move.w  target_xtile(a4),d4
+    move.w  target_ytile(a4),d5
+    btst    #DIRB_LEFT,d0
+    beq.b   .no_test_left
+    subq.w  #1,d4   ; tile left
+    bsr .compute_square_distance
+    cmp.l   d6,d7
+    bcs.b   .no_test_left
+    move.w  #LEFT,direction(a4)
+    move.l  d6,d7
+.no_test_left
+    move.w  target_xtile(a4),d4
+    move.w  target_ytile(a4),d5
+    btst    #DIRB_DOWN,d0
+    beq.b   .no_test_down
+    addq.w  #1,d5   ; tile down
+    bsr .compute_square_distance
+    cmp.l   d6,d7
+    bcs.b   .no_test_down
+    move.w  #DOWN,direction(a4)
+    move.l  d6,d7
+.no_test_down
+    move.w  target_xtile(a4),d4
+    move.w  target_ytile(a4),d5
+    btst    #DIRB_RIGHT,d0
+    beq.b   .no_test_right
+    addq.w  #1,d4   ; tile right
+    bsr .compute_square_distance
+    cmp.l   d6,d7
+    bcs.b   .no_test_right
+    move.w  #RIGHT,direction(a4)
+.no_test_right
+    rts
+
+; < D2: XT1
+; < D3: YT1
+; < D4: XT2
+; < D5: YT2
+; > D6: square distance
+.compute_square_distance   
+    moveq.l   #0,d4
+    sub.w   d2,d4
+    muls.w  d4,d4
+    moveq.l   #0,d5
+    sub.w   D3,D5
+    muls.w  D5,D5
+    move.l  d5,d6
+    add.l   d4,d6
+    rts
+.set_speed_vector
+    move.w  xpos(a4),d2
+    move.w  ypos(a4),d3
+    ; set speed vector when aligned with grid
+    ; direction is already set properly, no need to check walls again
+    ; (ghost faces the direction it's going to take)
+    ; if speed is vertical, check if aligned horizontally with grid
     move.w  d2,d0
     move.w  d3,d1
+    lea direction_speed_table(pc),a2
     move.w  v_speed(a4),d4
     ; now check if speeds are applicable to ghost
     beq.b   .no_vmove
     ; are we x-aligned?
     and.w   #$F8,d0
     add.w   #4,d0
-
     cmp.w   d0,d2
-    bne.b   .no_vmove   ; not aligned: don't move
-    
-    tst d4
-    bmi.b   .to_up
-    ;;move.w  #DOWN,d6
-    add.w  #4,d1
-    bra.b   .contv
-.to_up
-    ;;move.w  #UP,d6
-    sub.w  #5,d1
-.contv
+    beq.b   .change_direction   ; not aligned: don't change direction yet
+.no_vmove    
+    ; if speed is horizontal, check if aligned vertically with grid
+    move.w  h_speed(a4),d4
+    ; now check if speeds are applicable to ghost
+    beq.b   .no_vmove
+    ; are we y-aligned?
+    and.w   #$1F8,d1
+    add.w   #4,d1
+    cmp.w   d1,d3
+    bne.b   .no_hmove   ; not aligned: don't change direction yet
+.change_direction
+    move.w  direction(a4),d0
+    move.l  (a2,d0.l),h_speed(a4)   ; change h & v speed from set direction
+.no_hmove
+    rts
 
+; what: compute possible directions
+; elimiating the direction we're coming from
+; < A4: ghost structure
+; > D0: possible direction mask, DIR_RIGHT|DIR_LEFT...
+; trashes: D1-D4
+.compute_possible_directions
+    moveq.l #0,d4
+    move.w  xpos(a4),d2
+    move.w  ypos(a4),d3
+    tst.w   h_speed(a4)
+    bmi.b   .skip_right
+    ; h speed is 0 or > 0
+    ; test tile to the right
+    move.w  d2,d0
+    move.w  d3,d1
+    addq.w  #8,d0
 ; W = 4   ; wall
 ; P = 3   ; pen space (pac block)
 ; T = 2   ; tunnel
@@ -1213,95 +1435,132 @@ update_ghosts
 ; O = 0   ; empty
     bsr collides_with_maze
     tst.b d0    ; 'O'
-    beq.b   .can_move_vertically
-    cmp.b #P,d0    ; pen
-    beq.b   .can_move_vertically
-    ; now if down, can move
-    tst.w   d4
-    bmi.b   .block_up_move
+    beq.b   .can_move_right
+    cmp.b #W,d0    ; wall, frequent, optim
+    beq.b   .skip_right
     cmp.b #B,d0    ; ghost up block
-    beq.b   .can_move_vertically
-    ; cancel speed
-.block_up_move
-    clr.w   v_speed(a4)
-    bra.b   .no_vmove
-.can_move_vertically
-    ;;move.w  d6,direction(a4)
-        
-    add.w   d4,d3
-    move.w  d3,ypos(a4)
-
-    bsr .animate
-    clr.w   h_speed(a4)
-.no_vmove
-    rts
-    
-.ghtest
+    beq.b   .can_move_right
+    cmp.b #T,d0    ; pen
+    beq.b   .can_move_right
+    ; now if down, can move
+    cmp.b #P,d0    ; pen
+    bne.b   .skip_right
+.can_move_right
+    or.w    #DIRF_RIGHT,d4
+.skip_right
+    tst.w   h_speed(a4)
+    beq.b   .test_left
+    bpl.b   .skip_left
+.test_left
+    ; h speed is 0 or < 0
+    ; test tile to the left
     move.w  d2,d0
     move.w  d3,d1
-    move.w  h_speed(a4),d4
-    ; now check if speeds are applicable to player
-    beq.b   .no_hmove
-    ; are we y-aligned?
-    and.w   #$1F8,d1
-    add.w   #4,d1
-
-    cmp.w   d1,d3
-    bne.b   .no_hmove   ; not aligned: don't move
-
-    tst d4
-    bmi.b   .to_left
-    move.w  #RIGHT,d6
-    add.w  #4,d0
-    bra.b   .conth
-.to_left
-    move.w  #LEFT,d6
-    sub.w  #5,d0
-.conth
+    subq.w  #8,d0
+; W = 4   ; wall
+; P = 3   ; pen space (pac block)
+; T = 2   ; tunnel
+; B = 1   ; ghost block
+; O = 0   ; empty
     bsr collides_with_maze
-    tst.b d0
-    beq.b   .can_move_horizontally
-
+    tst.b d0    ; 'O'
+    beq.b   .can_move_left
+    cmp.b #W,d0    ; wall, frequent, optim
+    beq.b   .skip_left
+    cmp.b #B,d0    ; ghost up block
+    beq.b   .can_move_left
+    cmp.b #T,d0    ; pen
+    beq.b   .can_move_left
+    ; now if down, can move
     cmp.b #P,d0    ; pen
-    beq.b   .can_move_horizontally
+    bne.b   .skip_left
+.can_move_left
+    or.w    #DIRF_LEFT,d4
+.skip_left
+    tst.w   v_speed(a4)
+    bmi.b   .skip_down
+    ; v speed is 0 or > 0
+    ; test bottom tile 
+    move.w  d2,d0
+    move.w  d3,d1
+    addq.w  #8,d1
+; W = 4   ; wall
+; P = 3   ; pen space (pac block)
+; T = 2   ; tunnel
+; B = 1   ; ghost block
+; O = 0   ; empty
+    bsr collides_with_maze
+    tst.b d0    ; 'O'
+    beq.b   .can_move_down
+    cmp.b #W,d0    ; wall, frequent, optim
+    beq.b   .skip_down
     cmp.b #T,d0    ; tunnel
-    beq.b   .can_move_horizontally
-
-.block_move
-    ; cancel speed
-    clr.w   h_speed(a4)
-    bra.b   .no_hmove
-    
-.can_move_horizontally
-    ; set direction
-    move.w  d6,direction(a4)
-    
-    ; handle tunnel
-    add.w   d4,d2
-    bpl.b   .positive
-    ; warp to right
-    move.w  #X_MAX,d2
-    bra.b   .setx    
-.positive
-    cmp.w   #X_MAX,d2
-    bcs.b   .setx
-    clr.w   d2   ; warp to left
-.setx
-    move.w  d2,xpos(a4)
-    ;;move.w  d5,ypos(a4)
-    bsr .animate
-    clr.w   v_speed(a4)
-
-.no_hmove
+    beq.b   .can_move_down
+    ; now if down, can move
+    cmp.b #B,d0    ; ghost up block
+    beq.b   .can_move_down
+    cmp.b #P,d0    ; pen
+    bne.b   .skip_down
+.can_move_down
+    or.w    #DIRF_DOWN,d4
+.skip_down
+    tst.w   v_speed(a4)
+    beq.b   .test_up
+    bpl.b   .test_done
+.test_up
+    ; v speed is 0 or > 0
+    ; test bottom tile 
+    move.w  d2,d0
+    move.w  d3,d1
+    subq.w  #8,d1
+; W = 4   ; wall
+; P = 3   ; pen space (pac block)
+; T = 2   ; tunnel
+; B = 1   ; ghost block
+; O = 0   ; empty
+    bsr collides_with_maze
+    tst.b d0    ; 'O'
+    beq.b   .can_move_up
+    cmp.b #W,d0    ; wall, frequent, optim
+    beq.b   .test_done
+    cmp.b #T,d0    ; tunnel
+    beq.b   .can_move_up
+    ; now if up, can move, only if fright mode
+    move.w  mode(a4),d2
+    cmp.w   #MODE_FRIGHT,d2
+    beq.b   .skip_block_test
+    cmp.b #B,d0    ; ghost up block
+    bne.b   .test_done
+.skip_block_test
+    cmp.b #P,d0    ; pen
+    bne.b   .test_done
+.can_move_up    
+    or.w    #DIRF_UP,d4
+.test_done
+    move.l  d4,d0
     rts
+
     
-; called when ghost moves
-.animate
-    addq.w  #1,frame(a4)
-    cmp.w   #(red_ghost_end_frame_table-red_ghost_frame_table)/4,frame(a4)  ; TODO ghost
-    bne.b   .no_floop
-    clr.w   frame(a4)
-.no_floop
+; what: change ghost direction according speed
+; there can only be vertical OR horizontal speed
+; < A4: pointer on ghost structure
+; trashes: nothing
+.set_direction_from_speed
+    tst.w   h_speed(a4)
+    bmi.b   .left
+    beq.b   .vertical
+    move.w  #RIGHT,direction(a4)
+    rts
+.left
+    move.w  #LEFT,direction(a4)
+    rts
+.vertical    
+    tst.w   h_speed(a4)
+    bmi.b   .up
+    move.w  #DOWN,direction(a4)
+    rts
+.up
+    move.w  #UP,direction(a4)
     rts
     
 .new_mode
@@ -1360,7 +1619,6 @@ update_pac
 .no_reload
     ; player
     lea player(pc),a4
-    ; TODO: if ate a pill, must ack it else wait
     tst.b   still_timer(a4)
     beq.b   .okmove
     subq.b  #1,still_timer(a4)
@@ -1678,7 +1936,16 @@ ye  set ys+16       ; size = 16
     dc.b  ys&255, 0, ye&255, ((ys>>6)&%100) | ((ye>>7)&%10)
   endr
 
-
+direction_speed_table
+    ; right
+    dc.w    1,0
+    ; left
+    dc.w    -1,0
+    ; up
+    dc.w    0,-1
+    ; down
+    dc.w    -1,0
+    
 ; what: checks if x,y has a dot/fruit/power pill 
 ; args:
 ; < d0 : x (screen coords)
@@ -2107,7 +2374,7 @@ GRname:   dc.b "graphics.library",0
     even
 
 pac_dir_table
-    dc.l    pac_anim_left,pac_anim_right,pac_anim_up,pac_anim_down
+    dc.l    pac_anim_right,pac_anim_left,pac_anim_up,pac_anim_down
     
 PAC_ANIM_TABLE:MACRO
 pac_anim_\1
@@ -2117,8 +2384,8 @@ pac_anim_\1
 pac_anim_\1_end
     ENDM
     
-    PAC_ANIM_TABLE  left
     PAC_ANIM_TABLE  right
+    PAC_ANIM_TABLE  left
     PAC_ANIM_TABLE  up
     PAC_ANIM_TABLE  down
     
@@ -2399,7 +2666,12 @@ player:
     ds.b    Player_SIZEOF
 
 ghosts:
-    ds.b    Ghost_SIZEOF*4
+red_ghost:      ; needed by cyan ghost
+    ds.b    Ghost_SIZEOF
+pink_ghost:      ; needed by cyan ghost
+    ds.b    Ghost_SIZEOF
+    ds.b    Ghost_SIZEOF
+    ds.b    Ghost_SIZEOF
 
 ; BSS --------------------------------------
     SECTION  S2,BSS
