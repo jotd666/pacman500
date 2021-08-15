@@ -61,9 +61,9 @@ CIAAPRA = $BFE001
     UWORD    home_corner_ytile
     UWORD    mode_timer     ; number of 1/50th to stay in the current mode
     UWORD    mode           ; current mode
-    UBYTE    mode_counter   ; 0: first scatter, 1: first attack, etc.
+    UWORD    mode_counter   ; 0: first scatter, 1: first attack, etc.
     UBYTE    direction_change   ; direction change flag
-    
+    UBYTE    pad2
 	LABEL	Ghost_SIZEOF
     
     ;Exec Library Base Offsets
@@ -77,9 +77,9 @@ StartList = 38
 
 Execbase  = 4
 
-MODE_SCATTER = 0
-MODE_CHASE = 1
-MODE_FRIGHT = 2
+MODE_SCATTER = 10
+MODE_CHASE = 20
+MODE_FRIGHT = 30
 
 ; TODO: set 60
 NB_TICKS_PER_SEC = 50
@@ -104,20 +104,19 @@ NB_LINES = NB_TILE_LINES*8
 
 MAZE_BLINK_TIME = NB_TICKS_PER_SEC/2
 
-BONUS_X_POS = RED_XSTART_POS-24
-BONUS_Y_POS = RED_YSTART_POS+12
 
 X_START = 16
 Y_START = 24
 ; tunnel max
 X_MAX = (NB_TILES_PER_LINE-1)*8
 
-RED_YSTART_POS = 96+Y_START
+RED_YSTART_POS = 92+Y_START
 RED_XSTART_POS = 112+X_START
 OTHERS_XSTART_POS = RED_YSTART_POS+24
 
+BONUS_X_POS = RED_XSTART_POS-24
+BONUS_Y_POS = RED_YSTART_POS+16
 BONUS_OFFSET = $28F  ;(NB_TILES_PER_LINE*20)+14
-
 BONUS_TIMER_VALUE = NB_TICKS_PER_SEC*10
 
 BLINK_RATE = 2*(NB_TICKS_PER_SEC/5) ; for powerdots
@@ -360,6 +359,9 @@ init_ghosts
     clr.w   speed_table_index(a0)
     clr.b   direction_change(a0)
 
+    clr.w   h_speed(a0)
+    clr.w   v_speed(a0)
+    
     bsr     update_ghost_mode_timer
     move.w  #MODE_SCATTER,mode(a0)
     move.l  (a2)+,behaviour(a0)
@@ -372,20 +374,22 @@ init_ghosts
     lea ghosts(pc),a0
     ; red ghost
 	move.w  #RED_XSTART_POS,xpos(a0)
-	move.w	#RED_YSTART_POS,ypos(a0)    ; TBD
+	move.w	#RED_YSTART_POS,ypos(a0)
     move.w  #LEFT,direction(a0)
     move.w  #3,frame(a0)
     move.l  #red_ghost_frame_table,frame_table(a0)
     move.w  #2,home_corner_xtile(a0)
     move.w  #0,home_corner_ytile(a0)
-    add.l   #Ghost_SIZEOF,a0
+    move.w  #-1,h_speed(a0)
     ; pink ghost
+    add.l   #Ghost_SIZEOF,a0
 	move.w  #RED_XSTART_POS,xpos(a0)
     move.w  #DOWN,direction(a0)
     move.w  #6,frame(a0)
     move.l  #pink_ghost_frame_table,frame_table(a0)
     move.w  #(NB_TILES_PER_LINE-6),home_corner_xtile(a0)
     move.w  #0,home_corner_ytile(a0)
+    move.w  #1,v_speed(a0)
 
     add.l   #Ghost_SIZEOF,a0
     ; cyan ghost
@@ -395,8 +399,9 @@ init_ghosts
     move.l  #cyan_ghost_frame_table,frame_table(a0)
     move.w  #0,home_corner_xtile(a0)
     move.w  #(NB_TILE_LINES+1),home_corner_ytile(a0) 
-    add.l   #Ghost_SIZEOF,a0
+    move.w  #-1,v_speed(a0)
     ; orange ghost
+    add.l   #Ghost_SIZEOF,a0
 
 	move.w  #(RED_XSTART_POS+16),xpos(a0)
     move.w  #UP,direction(a0)
@@ -404,6 +409,7 @@ init_ghosts
     move.l  #orange_ghost_frame_table,frame_table(a0)
     move.w  #(NB_TILES_PER_LINE-4),home_corner_xtile(a0)
     move.w  #(NB_TILE_LINES+1),home_corner_ytile(a0)
+    move.w  #-1,v_speed(a0)
 
     rts
 
@@ -444,26 +450,86 @@ init_player
     move.w  #STATE_PLAYING,current_state
 	rts	    
 
-draw_debug
-    lea player(pc),a2
-    move.w  #232+8,d0
-    move.w  #68,d1
+DEBUG_X = 8     ; 232+8
+DEBUG_Y = 8
+
+ghost_debug
+    lea ghosts(pc),a2
+    move.w  #DEBUG_X,d0
+    move.w  #DEBUG_Y+100,d1
     lea	screen_data+SCREEN_PLANE_SIZE*3,a1 
-    lea .px(pc),a0
+    lea .gx(pc),a0
     bsr write_string
     lsl.w   #3,d0
-    add.w  #232+8,d0
+    add.w  #DEBUG_X,d0
     clr.l   d2
     move.w xpos(a2),d2
     move.w  #5,d3
     bsr write_decimal_number
-    move.w  #232+8,d0
+    move.w  #DEBUG_X,d0
+    add.w  #8,d1
+    move.l  d0,d4
+    lea .gy(pc),a0
+    bsr write_string
+    lsl.w   #3,d0
+    add.w  #DEBUG_X,d0
+    clr.l   d2
+    move.w ypos(a2),d2
+    move.w  #3,d3
+    bsr write_decimal_number
+
+    move.w  #DEBUG_X,d0
+    add.w  #8,d1
+    lea .timer(pc),a0
+    bsr write_string
+    lsl.w   #3,d0
+    add.w  #DEBUG_X,d0
+    clr.l   d2
+    move.w  mode_timer(a2),d2
+    move.w  #4,d3
+    bsr write_decimal_number
+    
+    move.w  #DEBUG_X,d0
+    add.w  #8,d1
+    lea .mode(pc),a0
+    bsr write_string
+    lsl.w   #3,d0
+    add.w  #DEBUG_X,d0
+    clr.l   d2
+    move.w  mode(a2),d2
+    move.w  #0,d3
+    bsr write_decimal_number
+    rts
+.gx
+        dc.b    "GX ",0
+.gy
+        dc.b    "GY ",0
+.timer
+        dc.b    "MTIM ",0
+.mode
+        dc.b    "MODE ",0
+        even
+        
+draw_debug
+    lea player(pc),a2
+    move.w  #DEBUG_X,d0
+    move.w  #DEBUG_Y,d1
+    lea	screen_data+SCREEN_PLANE_SIZE*3,a1 
+    lea .px(pc),a0
+    bsr write_string
+    lsl.w   #3,d0
+    add.w  #DEBUG_X,d0
+    clr.l   d2
+    move.w xpos(a2),d2
+    move.w  #5,d3
+    bsr write_decimal_number
+    move.w  #DEBUG_X,d0
     add.w  #8,d1
     move.l  d0,d4
     lea .py(pc),a0
     bsr write_string
     lsl.w   #3,d0
-    add.w  #232+8,d0
+    add.w  #DEBUG_X,d0
     clr.l   d2
     move.w ypos(a2),d2
     move.w  #3,d3
@@ -474,46 +540,25 @@ draw_debug
     lea .dots(pc),a0
     bsr write_string
     lsl.w   #3,d0
-    add.w  #232+8,d0
+    add.w  #DEBUG_X,d0
     clr.l   d2
     move.b nb_dots_eaten,d2
     move.w  #0,d3
     bsr write_decimal_number
     ;;
-    move.w  #232+8,d0
+    move.w  #DEBUG_X,d0
     add.w  #8,d1
     lea .bonus(pc),a0
     bsr write_string
     lsl.w   #3,d0
-    add.w  #232+8,d0
+    add.w  #DEBUG_X,d0
     clr.l   d2
     move.w bonus_timer,d2
     move.w  #3,d3
     bsr write_decimal_number
 
-    lea ghosts(pc),a2
-    
-    move.w  #232+8,d0
-    add.w  #8,d1
-    lea .redtimer(pc),a0
-    bsr write_string
-    lsl.w   #3,d0
-    add.w  #232+8,d0
-    clr.l   d2
-    move.w  mode_timer(a2),d2
-    move.w  #4,d3
-    bsr write_decimal_number
-    
-    move.w  #232+8,d0
-    add.w  #8,d1
-    lea .redmode(pc),a0
-    bsr write_string
-    lsl.w   #3,d0
-    add.w  #232+8,d0
-    clr.l   d2
-    move.b  mode(a2),d2
-    move.w  #0,d3
-    bsr write_decimal_number
+    bsr ghost_debug
+
     rts
     
 .px
@@ -524,10 +569,7 @@ draw_debug
         dc.b    "DOTS ",0
 .bonus
         dc.b    "BT ",0
-.redtimer
-        dc.b    "RT ",0
-.redmode
-        dc.b    "RM ",0
+
         even
         
 draw_all    
@@ -643,7 +685,7 @@ draw_all
     move.w  ypos(a0),d1
     ; center => top left
     sub.w  #8+X_START,d0
-    sub.w  #8+Y_START,d1
+    sub.w  #4+Y_START,d1    ; not 8, because maybe table is off?
     bsr store_sprite_pos    
     
     move.l  frame_table(a0),a1
@@ -895,7 +937,7 @@ draw_bounds
     rts
 draw_dots:
     ; draw pen gate
-    lea	screen_data+(RED_YSTART_POS-19)*NB_BYTES_PER_LINE+(RED_XSTART_POS-X_START)/8-1,a1
+    lea	screen_data+(RED_YSTART_POS-15)*NB_BYTES_PER_LINE+(RED_XSTART_POS-X_START)/8-1,a1
     moveq.l #-1,d0
     move.w  d0,(a1)
     move.w  d0,(NB_BYTES_PER_LINE,a1)
@@ -1106,8 +1148,10 @@ update_ghosts
     ; only red ATM
     
     ; decrease mode timer
-    subq.w  #1,mode_timer(a4)
+    move.w  mode_timer(a4),d0
+    subq.w  #1,d0
     beq.b   .new_mode
+    move.w  d0,mode_timer(a4)
 .mode_done
     move.l  a4,a0
     bsr get_ghost_move_speed
@@ -1122,10 +1166,142 @@ update_ghosts
     move.w  d1,d3
     lsr.w   #3,d2       ; 8 divide, now this is the tile
     lsr.w   #3,d3   ; 8 divide
+    move.w  d2,.prev_tile_x
+    move.w  d3,.prev_tile_y
+    move.w  d0,d2
+    move.w  d1,d3
 .move_loop
-    ; FUCK
+    ; cache xy in regs / save them
+    move.w  xpos(a4),d2
+    move.w  ypos(a4),d3
+    LOGPC   100
+    bsr.b .ghtest
+
     dbf d7,.move_loop
 .ghost_done
+    rts
+   
+.gvtest
+    ; vertical move
+    ; re-set coords
+    move.w  d2,d0
+    move.w  d3,d1
+    move.w  v_speed(a4),d4
+    ; now check if speeds are applicable to ghost
+    beq.b   .no_vmove
+    ; are we x-aligned?
+    and.w   #$F8,d0
+    add.w   #4,d0
+
+    cmp.w   d0,d2
+    bne.b   .no_vmove   ; not aligned: don't move
+    
+    tst d4
+    bmi.b   .to_up
+    ;;move.w  #DOWN,d6
+    add.w  #4,d1
+    bra.b   .contv
+.to_up
+    ;;move.w  #UP,d6
+    sub.w  #5,d1
+.contv
+
+; W = 4   ; wall
+; P = 3   ; pen space (pac block)
+; T = 2   ; tunnel
+; B = 1   ; ghost block
+; O = 0   ; empty
+    bsr collides_with_maze
+    tst.b d0    ; 'O'
+    beq.b   .can_move_vertically
+    cmp.b #P,d0    ; pen
+    beq.b   .can_move_vertically
+    ; now if down, can move
+    tst.w   d4
+    bmi.b   .block_up_move
+    cmp.b #B,d0    ; ghost up block
+    beq.b   .can_move_vertically
+    ; cancel speed
+.block_up_move
+    clr.w   v_speed(a4)
+    bra.b   .no_vmove
+.can_move_vertically
+    ;;move.w  d6,direction(a4)
+        
+    add.w   d4,d3
+    move.w  d3,ypos(a4)
+
+    bsr .animate
+    clr.w   h_speed(a4)
+.no_vmove
+    rts
+    
+.ghtest
+    move.w  d2,d0
+    move.w  d3,d1
+    move.w  h_speed(a4),d4
+    ; now check if speeds are applicable to player
+    beq.b   .no_hmove
+    ; are we y-aligned?
+    and.w   #$1F8,d1
+    add.w   #4,d1
+
+    cmp.w   d1,d3
+    bne.b   .no_hmove   ; not aligned: don't move
+
+    tst d4
+    bmi.b   .to_left
+    move.w  #RIGHT,d6
+    add.w  #4,d0
+    bra.b   .conth
+.to_left
+    move.w  #LEFT,d6
+    sub.w  #5,d0
+.conth
+    bsr collides_with_maze
+    tst.b d0
+    beq.b   .can_move_horizontally
+
+    cmp.b #P,d0    ; pen
+    beq.b   .can_move_horizontally
+    cmp.b #T,d0    ; tunnel
+    beq.b   .can_move_horizontally
+
+.block_move
+    ; cancel speed
+    clr.w   h_speed(a4)
+    bra.b   .no_hmove
+    
+.can_move_horizontally
+    ; set direction
+    move.w  d6,direction(a4)
+    
+    ; handle tunnel
+    add.w   d4,d2
+    bpl.b   .positive
+    ; warp to right
+    move.w  #X_MAX,d2
+    bra.b   .setx    
+.positive
+    cmp.w   #X_MAX,d2
+    bcs.b   .setx
+    clr.w   d2   ; warp to left
+.setx
+    move.w  d2,xpos(a4)
+    ;;move.w  d5,ypos(a4)
+    bsr .animate
+    clr.w   v_speed(a4)
+
+.no_hmove
+    rts
+    
+; called when ghost moves
+.animate
+    addq.w  #1,frame(a4)
+    cmp.w   #(red_ghost_end_frame_table-red_ghost_frame_table)/4,frame(a4)  ; TODO ghost
+    bne.b   .no_floop
+    clr.w   frame(a4)
+.no_floop
     rts
     
 .new_mode
@@ -1139,11 +1315,20 @@ update_ghosts
 
 .chase
     move.w  #MODE_CHASE,D0
-    bra.b   .switch_mode
     
 .switch_mode
     ; change mode
     move.w  d0,mode(a4)
+    ; next timer in table   
+    move.w   mode_counter(a4),d0
+    cmp.w   #6,d0
+    beq.b   .maxed
+    add.w   #1,d0
+    move.w  d0,mode_counter(a4)
+.maxed
+    ; reload new mode timer
+    move.l  a4,a0
+    bsr update_ghost_mode_timer
     move.b  #1,direction_change(a4)
     bra.b   .mode_done
 .scatter
@@ -1155,7 +1340,11 @@ update_ghosts
     blitz
     ; TODO
     bra.b   .mode_done
-    
+.prev_tile_x
+        dc.w    0
+.prev_tile_y
+        dc.w    0
+        
 update_pac
     tst.w   bonus_timer
     beq.b   .no_fruit
@@ -1816,6 +2005,12 @@ write_string
     moveq.l #0,d2
     bra.b   .wl
 .noexcl
+    cmp.b   #' ',d2
+    bne.b   .nospace
+    lea space(pc),a2
+    moveq.l #0,d2
+    bra.b   .wl
+.nospace
     cmp.b   #'0',d2
     bcs.b   .next
     cmp.b   #'9'+1,d2
@@ -1877,7 +2072,7 @@ maze_blink_timer
     dc.w    0
 bonus_level_table:
     dc.w    0,1,2,2,3,3,4,4,5,5,6,6,7
-bonus_level_score:
+bonus_level_score:  ; *10
     dc.w    10,30,50,50,70,70,100,100,200,200,300,300,500
 bonus_timer
     dc.w    0
@@ -1971,7 +2166,9 @@ letters
     incbin	"Z.bin"    
 exclamation
     incbin  "exclamation.bin"
-
+space
+    ds.b    8,0
+    
 high_score_string
     dc.b    " HIGH SCORE",0
 p1_string
@@ -2328,6 +2525,9 @@ DECL_GHOST:MACRO
     dc.l    \1_ghost_5
     dc.l    \1_ghost_6
     dc.l    \1_ghost_7
+\1_ghost_end_frame_table:
+    ; all ghosts share the same graphics, only the colors are different
+    ; but we need to replicate the graphics 8*4 times because of sprite control word
 \1_ghost_0
     dc.l    0
     incbin  "ghost_0.bin"
