@@ -28,7 +28,7 @@ game_palette_txt = """
 
 
 game_palette = bitplanelib.palette_dcw2palette(game_palette_txt)
-bitplanelib.palette_dump(game_palette,r"../src/palette_clist.s",as_copperlist=True)
+bitplanelib.palette_dump(game_palette,r"../src/palette.s",as_copperlist=False)
 
 outdir = "dumps"
 
@@ -86,12 +86,18 @@ def process_tiles():
             # save
             x_size = cropped_img.size[0]
             sprite_number = object.get("sprite_number")
+            sprite_palette = object.get("sprite_palette")
             if sprite_number is not None:
                 if x_size != 16:
                     raise Exception("{} (frame #{}) width (as sprite) should 16, found {}".format(name,i,x_size))
-                sprite_palette_offset = 16+(sprite_number//2)*4
+                if sprite_palette:
+                    sprite_palette = [tuple(x) for x in sprite_palette]
+                    bitplanelib.palette_dump(sprite_palette,"../{}/{}.s".format("src",name))
+                else:
+                    sprite_palette_offset = 16+(sprite_number//2)*4
+                    sprite_palette = game_palette[sprite_palette_offset:sprite_palette_offset+4]
                 bitplanelib.palette_image2sprite(cropped_img,"../{}/{}_{}.bin".format(sprites_dir,name,i),
-                    game_palette[sprite_palette_offset:sprite_palette_offset+4],palette_precision_mask=0xF0)
+                    sprite_palette,palette_precision_mask=0xF0)
             else:
                 # blitter object
                 if x_size % 16:
@@ -160,7 +166,6 @@ def process_fonts():
 
             # save
             x_size = cropped_img.size[0]
-            sprite_number = object.get("sprite_number")
 
             # blitter object
             if x_size % 8:

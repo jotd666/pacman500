@@ -35,6 +35,12 @@
 
 CIAAPRA = $BFE001
 
+    STRUCTURE   SpritePalette,0
+    UWORD   color1
+    UWORD   color2
+    UWORD   color3
+    LABEL   SpritePalette_SIZEOF
+    
 	STRUCTURE	Character,0
 	UWORD	xpos
 	UWORD	ypos
@@ -54,6 +60,7 @@ CIAAPRA = $BFE001
     
 	STRUCTURE	Ghost,0
 	STRUCT      BaseCharacter2,Character_SIZEOF
+	STRUCT      palette,SpritePalette_SIZEOF
     APTR     behaviour
     APTR     frame_table
     APTR     copperlist_address
@@ -263,6 +270,12 @@ Start:
     jsr _LVOForbid(a6)
     move.w #$03E0,dmacon(A5)
 
+    lea game_palette(pc),a0
+    lea _custom+color,a1
+    move.w  #31,d0
+.copy
+    move.w  (a0)+,(a1)+
+    dbf d0,.copy
 ;COPPER init
 		
     move.l	#coplist,cop1lc(a5)
@@ -363,9 +376,14 @@ init_ghosts
     lea ghosts(pc),a0
     lea sprites,a1   ; the sprite part of the copperlist
     lea behaviour_table(pc),a2
+    lea game_palette+32(pc),a3  ; the sprite part of the color palette 16-31
     ; shared settings
     moveq.w #3,d7
 .igloop
+    ; copy all 4 colors (back them up)
+    move.l (a3)+,palette(a0)
+    move.l (a3)+,palette+4(a0)   
+    
     move.l  a1,copperlist_address(a0)
     add.l   #16,a1
     
@@ -455,7 +473,8 @@ cyan_chase
     rts
     
 ; < A0: ghost structure
-; trashes: D0
+; < A1: player structure
+; trashes: D0 & D1
 update_ghost_target
     move.w  mode(a0),d0
     cmp.w   #MODE_SCATTER,d0
@@ -1312,6 +1331,7 @@ update_ghosts
     ; fright mode: TODO
     bra.b   .tile_change_done
 .no_fright:
+    move.l  a4,a0
     bsr update_ghost_target
     ; optimization: where there's only one possible direction, skip
     lea no_direction_choice_table(pc),a0
@@ -1320,7 +1340,7 @@ update_ghosts
     ; try to select the best direction to reach the target
     move.w  d3,d0       ; get possible directions back
     move.w  xpos(a4),d2
-    move.w  ypos(a4),d2
+    move.w  ypos(a4),d3
     lsr.w   #3,d2
     lsr.w   #3,d3
     ; now it's time to check the possible tiles
@@ -2757,6 +2777,16 @@ dot_table_read_only:
     even
 powerdots
     ds.l    4
+
+; for frightened ghosts & eyes
+frightened_ghosts_blue
+    include "frightened_ghost_blue.s"
+frightened_ghosts_white
+    include "frightened_ghost_white.s"
+ghost_eyes
+    include "ghost_eyes.s"
+game_palette
+    include "palette.s"
     
 player:
     ds.b    Player_SIZEOF
@@ -2799,7 +2829,7 @@ bitplanes:
 ;   dc.l  $00f20000
 
 colors:
-   include "palette_clist.s"
+   dc.w color,0     ; fix black (so debug can flash color0)
 sprites:
     ; red ghost
     dc.w    sprpt,0

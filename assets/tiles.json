@@ -49,12 +49,28 @@
    "start_y":64
   },
   {
-   "ignore" : true,
-   "name":"frightened_ghost",
+   "name":"frightened_ghost_blue",
+   "sprite_palette":[[0,0,0],[32,32,240],[240,176,176],[240,0,0]],
+   "sprite_number":0,
+   "frames":2,
+   "start_x":128,
+   "start_y":64
+  },
+  {
+   "name":"frightened_ghost_white",
+   "sprite_palette":[[0,0,0],[32,32,240],[224,208,240],[240,0,0]],
+   "sprite_number":0,
+   "frames":2,
+   "start_x":160,
+   "start_y":64
+  },
+  {
+   "name":"ghost_eyes",
+   "sprite_palette":[[0,0,0],[32,32,240],[224,208,240],[240,0,0]],
    "sprite_number":0,
    "frames":4,
    "start_x":128,
-   "start_y":64
+   "start_y":80
   },
 {
    "ignore" : true,
