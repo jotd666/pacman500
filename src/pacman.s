@@ -64,7 +64,7 @@ CIAAPRA = $BFE001
     UWORD    mode_timer     ; number of 1/50th to stay in the current mode
     UWORD    mode           ; current mode
     UWORD    mode_counter   ; 0: first scatter, 1: first attack, etc.
-    UBYTE    direction_change   ; direction change flag
+    UBYTE    reverse_flag   ; direction change flag
     UBYTE    pad2
 	LABEL	Ghost_SIZEOF
     
@@ -126,23 +126,22 @@ PREPOST_TURN_LOCK = 4
 
 DOT_PLANE_OFFSET = SCREEN_PLANE_SIZE*2-(X_START/8)
 
-; follows order of ghosts
+; direction enumerates, follows order of ghosts in the sprite sheet
 RIGHT = 0
 LEFT = 1<<2
 UP = 2<<2
 DOWN = 3<<2
 
-; possible directions, clockwise
-
-
+; possible direction bits, clockwise
 DIRB_RIGHT = 0
 DIRB_DOWN = 1
 DIRB_LEFT = 2
 DIRB_UP = 3
-DIRF_RIGHT = 1
-DIRF_DOWN = 1<<1
-DIRF_LEFT = 1<<2
-DIRF_UP = 1<<3
+; direction masks
+DIRF_RIGHT = 1<<DIRB_RIGHT
+DIRF_DOWN = 1<<DIRB_DOWN
+DIRF_LEFT = 1<<DIRB_LEFT
+DIRF_UP = 1<<DIRB_UP
 
 ; states, 2 by 2, starting by 0
 
@@ -372,7 +371,7 @@ init_ghosts
     
     clr.w   mode_counter(a0)
     clr.w   speed_table_index(a0)
-    clr.b   direction_change(a0)
+    clr.b   reverse_flag(a0)
 
     clr.w   h_speed(a0)
     clr.w   v_speed(a0)
@@ -572,7 +571,7 @@ ghost_debug
 
     move.w  #DEBUG_X,d0
     add.w  #8,d1
-    lea .dir(pc),a0
+    lea .pdir(pc),a0
     bsr write_string
     lsl.w   #3,d0
     add.w  #DEBUG_X,d0
@@ -591,6 +590,8 @@ ghost_debug
         dc.b    "MODE ",0
 .dir
         dc.b    "DIR ",0
+.pdir
+        dc.b    "PDIR ",0
         even
 possible_directions
         dc.w    0
@@ -1290,28 +1291,33 @@ update_ghosts
     
 .tile_change
     ; now the tricky bit: decide where to go
-    ; first check for "direction change" signal
-    tst.b   direction_change(a4)
-    beq.b   .no_dirchange
-    clr.b   direction_change(a4)    ; ack
+    ; first check for "reverse flag" signal
+    tst.b   reverse_flag(a4)
+    beq.b   .no_reverse
+    clr.b   reverse_flag(a4)    ; ack
     neg.w  h_speed(a4)
     neg.w  v_speed(a4)
     bsr    .set_direction_from_speed
     bra.b   .next_ghost
-.no_dirchange
-
+.no_reverse
     ; direction NOT changed, check objective if not fright mode
     bsr .compute_possible_directions
     move.w  d0,possible_directions  ; DEBUG
+    move.w  d0,d3           ; save possible directions in D3
     move.w  mode(a4),d0
     cmp.w   #MODE_FRIGHT,d0
     bne.b   .no_fright
     ; fright mode: TODO
-    blitz
     bra.b   .set_speed_vector
 .no_fright:
     bsr update_ghost_target
+    blitz
+    ; optimization: where there's only one possible direction, skip
+    lea no_direction_choice_table(pc),a0
+    move.b   (a0,d3.w),d4
+    bne.b   .one_direction_only
     ; try to select the best direction to reach the target
+    move.w  d3,d0       ; get possible directions back
     move.w  xpos(a4),d2
     move.w  ypos(a4),d2
     lsr.w   #3,d2
@@ -1361,23 +1367,64 @@ update_ghosts
     bcs.b   .no_test_right
     move.w  #RIGHT,direction(a4)
 .no_test_right
-    rts
-
+    bra.b   .set_speed_vector
+    
+.one_direction_only
+    ext.w   d4
+    move.w  d4,direction(a4)
+    bra.b   .set_speed_vector
+    
+    
+; what: computes square distance using square
+; tables (faster than multiplying)
 ; < D2: XT1
 ; < D3: YT1
 ; < D4: XT2
 ; < D5: YT2
 ; > D6: square distance
-.compute_square_distance   
-    moveq.l   #0,d4
+; trashes: A0, D4, D5
+
+.compute_square_distance
+    lea  square_table(pc),a0
+    moveq.l   #0,d6
+    sub.w   d2,d4
+    bpl.b   .pos1
+    neg.w   d4
+.pos1
+    add.w   d4,d4
+    move.w  (a0,d4.w),d6    ; still < 65536
+    sub.w   D3,D5
+    bpl.b   .pos2
+    neg.w   d4
+.pos2
+    add.w  D5,D5
+    move.w  (a0,d5.w),d5
+    swap    d5
+    clr.w   d5
+    swap    d5
+    add.l   d5,d6   ; may be > 65536
+    rts
+    
+; < D2: XT1
+; < D3: YT1
+; < D4: XT2
+; < D5: YT2
+; > D6: square distance
+.compute_square_distance_old   
+    swap    d4
+    clr.w   d4
+    swap    d4
     sub.w   d2,d4
     muls.w  d4,d4
-    moveq.l   #0,d5
+    swap    d5
+    clr.w   d5
+    swap    d5
     sub.w   D3,D5
     muls.w  D5,D5
     move.l  d5,d6
     add.l   d4,d6
     rts
+    
 .set_speed_vector
     move.w  xpos(a4),d2
     move.w  ypos(a4),d3
@@ -1387,29 +1434,29 @@ update_ghosts
     ; if speed is vertical, check if aligned horizontally with grid
     move.w  d2,d0
     move.w  d3,d1
-    lea direction_speed_table(pc),a2
     move.w  v_speed(a4),d4
     ; now check if speeds are applicable to ghost
-    beq.b   .no_vmove
+    beq.b   .no_vmove   ; not opposed to direction change
     ; are we x-aligned?
     and.w   #$F8,d0
     add.w   #4,d0
     cmp.w   d0,d2
-    beq.b   .change_direction   ; not aligned: don't change direction yet
+    bne.b   .no_dirchange
 .no_vmove    
     ; if speed is horizontal, check if aligned vertically with grid
     move.w  h_speed(a4),d4
     ; now check if speeds are applicable to ghost
-    beq.b   .no_vmove
+    beq.b   .change_direction       ; speed=0: okay
     ; are we y-aligned?
     and.w   #$1F8,d1
     add.w   #4,d1
     cmp.w   d1,d3
-    bne.b   .no_hmove   ; not aligned: don't change direction yet
+    bne.b   .no_dirchange   ; not aligned: don't change direction yet
 .change_direction
+    lea direction_speed_table(pc),a2
     move.w  direction(a4),d0
-    move.l  (a2,d0.l),h_speed(a4)   ; change h & v speed from set direction
-.no_hmove
+    move.l  (a2,d0.w),h_speed(a4)   ; change h & v speed from set direction
+.no_dirchange
     rts
 
 ; what: compute possible directions
@@ -1442,8 +1489,10 @@ update_ghosts
     beq.b   .can_move_right
     cmp.b #T,d0    ; pen
     beq.b   .can_move_right
-    ; now if down, can move
-    cmp.b #P,d0    ; pen
+    ; now if down, can move but only if already
+    ; inside the pen (cannot enter the pen once out unless in
+    ; "eyes" mode
+    bsr.b   .pen_tile_check
     bne.b   .skip_right
 .can_move_right
     or.w    #DIRF_RIGHT,d4
@@ -1469,10 +1518,9 @@ update_ghosts
     beq.b   .skip_left
     cmp.b #B,d0    ; ghost up block
     beq.b   .can_move_left
-    cmp.b #T,d0    ; pen
+    cmp.b #T,d0    ; tunnel
     beq.b   .can_move_left
-    ; now if down, can move
-    cmp.b #P,d0    ; pen
+    bsr.b   .pen_tile_check
     bne.b   .skip_left
 .can_move_left
     or.w    #DIRF_LEFT,d4
@@ -1499,7 +1547,7 @@ update_ghosts
     ; now if down, can move
     cmp.b #B,d0    ; ghost up block
     beq.b   .can_move_down
-    cmp.b #P,d0    ; pen
+    bsr.b   .pen_tile_check
     bne.b   .skip_down
 .can_move_down
     or.w    #DIRF_DOWN,d4
@@ -1532,7 +1580,7 @@ update_ghosts
     cmp.b #B,d0    ; ghost up block
     bne.b   .test_done
 .skip_block_test
-    cmp.b #P,d0    ; pen
+    bsr.b   .pen_tile_check
     bne.b   .test_done
 .can_move_up    
     or.w    #DIRF_UP,d4
@@ -1540,6 +1588,25 @@ update_ghosts
     move.l  d4,d0
     rts
 
+; what: check if pen tile is valid
+; - when already in the pen, can move inside it
+; - when in "eyes" mode (TODO)
+; < Z=0 if not possible to walk on a pen tile
+.pen_tile_check
+    cmp.b   #P,d0
+    bne.b   .no_pen_tile
+    ; pen tile: are we in the pen already
+    move.w  d2,d0
+    move.w  d3,d1
+; W = 4   ; wall
+; P = 3   ; pen space (pac block)
+; T = 2   ; tunnel
+; B = 1   ; ghost block
+; O = 0   ; empty
+    bsr collides_with_maze
+    cmp.b   #P,d0    
+.no_pen_tile
+    rts
     
 ; what: change ghost direction according speed
 ; there can only be vertical OR horizontal speed
@@ -1588,7 +1655,7 @@ update_ghosts
     ; reload new mode timer
     move.l  a4,a0
     bsr update_ghost_mode_timer
-    move.b  #1,direction_change(a4)
+    move.b  #1,reverse_flag(a4)
     bra.b   .mode_done
 .scatter
     move.w  #MODE_SCATTER,D0
@@ -1599,10 +1666,7 @@ update_ghosts
     blitz
     ; TODO
     bra.b   .mode_done
-.prev_tile_x
-        dc.w    0
-.prev_tile_y
-        dc.w    0
+
         
 update_pac
     tst.w   bonus_timer
@@ -1921,6 +1985,15 @@ store_sprite_pos
 
 player_speed
     dc.w    1
+direction_speed_table
+    ; right
+    dc.w    1,0
+    ; left
+    dc.w    -1,0
+    ; up
+    dc.w    0,-1
+    ; down
+    dc.w    0,1
     
 HW_SpriteXTable
   rept 320
@@ -1936,15 +2009,6 @@ ye  set ys+16       ; size = 16
     dc.b  ys&255, 0, ye&255, ((ys>>6)&%100) | ((ye>>7)&%10)
   endr
 
-direction_speed_table
-    ; right
-    dc.w    1,0
-    ; left
-    dc.w    -1,0
-    ; up
-    dc.w    0,-1
-    ; down
-    dc.w    -1,0
     
 ; what: checks if x,y has a dot/fruit/power pill 
 ; args:
@@ -2009,8 +2073,7 @@ collides_with_maze:
     move.b  (a0,d0.w),d0
     rts
 
-    
-    MUL_TABLE   40
+   
 
 ; what: blits 16x16 data on one plane
 ; args:
@@ -2446,6 +2509,31 @@ game_over_string
     dc.b    "GAME  OVER",0
 ready_string
     dc.b    "READY!",0
+    even
+
+    MUL_TABLE   40
+
+square_table:
+	rept	256
+	dc.w	REPTN*REPTN
+	endr
+   
+; truth table to avoid testing for several directions where there's only once choice
+; (one bit set)
+no_direction_choice_table:
+    dc.b    0   ; 0=not possible
+    dc.b    RIGHT   ; 1
+    dc.b    DOWN   ; 2
+    dc.b    0   ; 3=composite
+    dc.b    LEFT   ; 4=UP
+    dc.b    0   ; 5=composite
+    dc.b    0   ; idem
+    dc.b    0   ; idem
+    dc.b    UP   ; 8
+    ; all the rest is composite or invalid
+    REPT    7
+    dc.b    0
+    ENDR
     even
     
 timer_table:
