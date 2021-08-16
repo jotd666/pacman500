@@ -1284,6 +1284,8 @@ update_ghosts
     bne.b   .tile_change
     cmp.w   d3,d5
     bne.b   .tile_change
+.tile_change_done
+    bra.b   .set_speed_vector
 .next_ghost
     dbf d7,.move_loop
 .ghost_done
@@ -1308,10 +1310,9 @@ update_ghosts
     cmp.w   #MODE_FRIGHT,d0
     bne.b   .no_fright
     ; fright mode: TODO
-    bra.b   .set_speed_vector
+    bra.b   .tile_change_done
 .no_fright:
     bsr update_ghost_target
-    blitz
     ; optimization: where there's only one possible direction, skip
     lea no_direction_choice_table(pc),a0
     move.b   (a0,d3.w),d4
@@ -1367,12 +1368,12 @@ update_ghosts
     bcs.b   .no_test_right
     move.w  #RIGHT,direction(a4)
 .no_test_right
-    bra.b   .set_speed_vector
+    bra.b   .tile_change_done
     
 .one_direction_only
     ext.w   d4
     move.w  d4,direction(a4)
-    bra.b   .set_speed_vector
+    bra.b   .tile_change_done
     
     
 ; what: computes square distance using square
@@ -1426,31 +1427,33 @@ update_ghosts
     rts
     
 .set_speed_vector
-    move.w  xpos(a4),d2
-    move.w  ypos(a4),d3
+    lea grid_align_table(pc),a2
+    
+    move.w  xpos(a4),d1
     ; set speed vector when aligned with grid
     ; direction is already set properly, no need to check walls again
     ; (ghost faces the direction it's going to take)
     ; if speed is vertical, check if aligned horizontally with grid
-    move.w  d2,d0
-    move.w  d3,d1
-    move.w  v_speed(a4),d4
+;    move.w  v_speed(a4),d4
     ; now check if speeds are applicable to ghost
-    beq.b   .no_vmove   ; not opposed to direction change
+;    beq.b   .no_vmove   ; not opposed to direction change
     ; are we x-aligned?
-    and.w   #$F8,d0
-    add.w   #4,d0
+    move.w  d1,d2
+    add.w   d1,d1
+    move.w  (a2,d1.w),d0
     cmp.w   d0,d2
     bne.b   .no_dirchange
 .no_vmove    
+    move.w  ypos(a4),d1
     ; if speed is horizontal, check if aligned vertically with grid
-    move.w  h_speed(a4),d4
+;    move.w  h_speed(a4),d4
     ; now check if speeds are applicable to ghost
-    beq.b   .change_direction       ; speed=0: okay
+;    beq.b   .change_direction       ; speed=0: okay
     ; are we y-aligned?
-    and.w   #$1F8,d1
-    add.w   #4,d1
-    cmp.w   d1,d3
+    move.w  d1,d2
+    add.w   d1,d1
+    move.w  (a2,d1.w),d0
+    cmp.w   d0,d2
     bne.b   .no_dirchange   ; not aligned: don't change direction yet
 .change_direction
     lea direction_speed_table(pc),a2
@@ -1995,6 +1998,11 @@ direction_speed_table
     ; down
     dc.w    0,1
     
+grid_align_table
+    REPT    320
+    dc.w    (REPTN&$1F8)+4
+    ENDR
+    
 HW_SpriteXTable
   rept 320
 x   set REPTN+$80
@@ -2003,7 +2011,7 @@ x   set REPTN+$80
 
 
 HW_SpriteYTable
-  rept 256
+  rept 260
 ys  set REPTN+$2c
 ye  set ys+16       ; size = 16
     dc.b  ys&255, 0, ye&255, ((ys>>6)&%100) | ((ye>>7)&%10)
