@@ -1,0 +1,4 @@
+X=68,Y=46: red ghost sprite seen double!!! (winuae???)
+left/down/left/up/+ misses right turn???
+frightmode: wrong flash
+frightmode: wrong color when mode is off

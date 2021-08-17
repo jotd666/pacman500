@@ -64,13 +64,19 @@ CIAAPRA = $BFE001
     APTR     behaviour
     APTR     frame_table
     APTR     copperlist_address
+    APTR     color_register
     UWORD    home_corner_xtile
     UWORD    home_corner_ytile
     UWORD    target_xtile
     UWORD    target_ytile
     UWORD    mode_timer     ; number of 1/50th to stay in the current mode
     UWORD    mode           ; current mode
+    UWORD    previous_mode_timer     ; number of 1/50th to stay in the current mode
+    UWORD    previous_mode           ; current mode
     UWORD    mode_counter   ; 0: first scatter, 1: first attack, etc.
+    UWORD    flash_timer
+    UWORD    flash_toggle_timer
+    UWORD    flashing_as_white
     UBYTE    reverse_flag   ; direction change flag
     UBYTE    pad2
 	LABEL	Ghost_SIZEOF
@@ -89,6 +95,7 @@ Execbase  = 4
 MODE_SCATTER = 10
 MODE_CHASE = 20
 MODE_FRIGHT = 30
+MODE_EYES = 40
 
 ; TODO: set 60
 NB_TICKS_PER_SEC = 50
@@ -113,6 +120,7 @@ NB_LINES = NB_TILE_LINES*8
 
 MAZE_BLINK_TIME = NB_TICKS_PER_SEC/2
 
+NB_FLASH_FRAMES = 14
 
 X_START = 16
 Y_START = 24
@@ -379,11 +387,13 @@ init_ghosts
     lea game_palette+32(pc),a3  ; the sprite part of the color palette 16-31
     ; shared settings
     moveq.w #3,d7
+    lea _custom+color+32,a4
 .igloop
     ; copy all 4 colors (back them up)
     move.l (a3)+,palette(a0)
     move.l (a3)+,palette+4(a0)   
-    
+    move.l  a4,color_register(a0)
+    addq.l  #8,a4   ; next color register range
     move.l  a1,copperlist_address(a0)
     add.l   #16,a1
     
@@ -395,6 +405,8 @@ init_ghosts
     clr.w   v_speed(a0)
     clr.w   target_xtile(a0)
     clr.w   target_ytile(a0)
+    clr.w   home_corner_xtile(a0)
+    clr.w   home_corner_ytile(a0)
     
     bsr     update_ghost_mode_timer
     move.w  #MODE_SCATTER,mode(a0)
@@ -412,8 +424,7 @@ init_ghosts
     move.w  #LEFT,direction(a0)
     move.w  #8,frame(a0)
     move.l  #red_ghost_frame_table,frame_table(a0)
-    move.w  #2,home_corner_xtile(a0)
-    move.w  #0,home_corner_ytile(a0)
+    move.w  #(NB_TILES_PER_LINE-6),home_corner_xtile(a0)
     bsr     update_ghost_target
     move.w  #-1,h_speed(a0)
     ; pink ghost
@@ -421,8 +432,8 @@ init_ghosts
 	move.w  #RED_XSTART_POS,xpos(a0)
     move.w  #DOWN,direction(a0)
     move.w  #0,frame(a0)
+    move.w  #2,home_corner_xtile(a0)
     move.l  #pink_ghost_frame_table,frame_table(a0)
-    move.w  #(NB_TILES_PER_LINE-6),home_corner_xtile(a0)
     bsr     update_ghost_target
     move.w  #0,home_corner_ytile(a0)
     move.w  #1,v_speed(a0)
@@ -433,7 +444,7 @@ init_ghosts
     move.w  #UP,direction(a0)
     move.w  #0,frame(a0)
     move.l  #cyan_ghost_frame_table,frame_table(a0)
-    move.w  #0,home_corner_xtile(a0)
+    move.w  #(NB_TILES_PER_LINE-4),home_corner_xtile(a0)
     move.w  #(NB_TILE_LINES+1),home_corner_ytile(a0) 
     bsr update_ghost_target
     move.w  #-1,v_speed(a0)
@@ -444,7 +455,6 @@ init_ghosts
     move.w  #UP,direction(a0)
     move.w  #0,frame(a0)
     move.l  #orange_ghost_frame_table,frame_table(a0)
-    move.w  #(NB_TILES_PER_LINE-4),home_corner_xtile(a0)
     move.w  #(NB_TILE_LINES+1),home_corner_ytile(a0)
     bsr update_ghost_target
     move.w  #-1,v_speed(a0)
@@ -524,6 +534,7 @@ init_player
     clr.b   still_timer(a0)
     move.w  #0,frame(a0)
     move.w  #50,ready_timer
+    clr.l   previous_random
     move.w  #STATE_PLAYING,current_state
 	rts	    
 
@@ -563,7 +574,11 @@ ghost_debug
     add.w  #DEBUG_X,d0
     clr.l   d2
     move.w  mode_timer(a2),d2
-    move.w  #4,d3
+    divu    #50,d2
+    swap    d2
+    clr.w   d2
+    swap    d2
+    move.w  #2,d3
     bsr write_decimal_number
     
     move.w  #DEBUG_X,d0
@@ -676,7 +691,66 @@ draw_debug
         dc.b    "BT ",0
 
         even
-        
+
+draw_ghosts:
+    lea ghosts(pc),a0
+    moveq.l #3,d7
+.gloop    
+    move.w  xpos(a0),d0
+    move.w  ypos(a0),d1
+    ; center => top left
+    sub.w  #8+X_START,d0
+    sub.w  #4+Y_START,d1    ; not 8, because maybe table is off?
+    bsr store_sprite_pos    
+    move.w  mode(a0),d3 ; scatter/chase/fright/return base
+    move.l  frame_table(a0),a1
+    move.w  frame(a0),d2
+    lsr.w   #2,d2   ; 8 divide to get 0,1, divide by 4 then mask after adding direction
+    cmp.w   #MODE_FRIGHT,d3
+    bne.b   .no_fright
+    ; change palette for that sprite
+    move.w  mode_timer(a0),d4
+    move.l  color_register(a0),a3
+    lea     frightened_ghosts_blue_palette(pc),a2
+    lea     frightened_ghost_blue_frame_table(pc),a1
+    cmp.w   flash_timer(a0),d4
+    bcs.b   .no_flashing
+    ; now check the flash toggle
+    move.w  flash_toggle_timer(a0),d4
+    addq.w  #1,d4
+    cmp.w   #NB_FLASH_FRAMES,d4
+    bne.b   .no_toggle
+    clr.w   d4
+    eor.w   #1,flashing_as_white(a0)
+    tst.w   flashing_as_white(a0)
+    beq.b   .no_toggle
+    ; white flashing
+    lea     frightened_ghosts_white_palette(pc),a2
+    lea     frightened_ghost_white_frame_table(pc),a1    
+.no_toggle
+    move.w  d4,flash_toggle_timer(a0)
+.no_flashing
+    ; directly change color registers for that sprite
+    move.l  (a2)+,(a3)+
+    move.l  (a2)+,(a3)+
+    bra.b   .fright
+.no_fright
+    add.w   direction(a0),d2     ; add 0,4,8,12 depending on direction
+.fright
+    bclr    #0,d2   ; even
+    add.w   d2,d2       ; times 2
+    move.l  (a1,d2.w),a1
+    move.l  d0,(a1)     ; store control word
+    move.l  a1,d2    
+    move.l  copperlist_address(a0),a1
+    move.w  d2,(6,a1)
+    swap    d2
+    move.w  d2,(2,a1)    
+    
+    add.l   #Ghost_SIZEOF,a0
+    dbf d7,.gloop
+    rts
+    
 draw_all    
     move.w  current_state(pc),d0
     lea     .case_table(pc),a0
@@ -783,33 +857,7 @@ draw_all
     ; set proper positions for ghosrs
     ENDC
     
-    lea ghosts(pc),a0
-    moveq.l #3,d7
-.gloop    
-    move.w  xpos(a0),d0
-    move.w  ypos(a0),d1
-    ; center => top left
-    sub.w  #8+X_START,d0
-    sub.w  #4+Y_START,d1    ; not 8, because maybe table is off?
-    bsr store_sprite_pos    
-    
-    move.l  frame_table(a0),a1
-    move.w  frame(a0),d2
-    lsr.w   #2,d2   ; 8 divide to get 0,1, divide by 4 then mask after adding direction
-    add.w   direction(a0),d2     ; add 0,4,8,12 depending on direction
-    bclr    #0,d2   ; even
-    add.w   d2,d2       ; times 2
-    move.l  (a1,d2.w),a1
-    move.l  d0,(a1)     ; store control word
-    move.l  a1,d2    
-    move.l  copperlist_address(a0),a1
-    move.w  d2,(6,a1)
-    swap    d2
-    move.w  d2,(2,a1)    
-    
-    add.l   #Ghost_SIZEOF,a0
-    dbf d7,.gloop
-    
+    bsr   draw_ghosts
     
     ; timer not running, animate
     move.w  power_dot_timer(pc),d0
@@ -886,6 +934,16 @@ draw_all
 .draw_complete
     rts
 
+random:
+    move.l  previous_random(pc),d0
+	;;; EAB simple random generator
+    ; thanks meynaf
+    mulu #$a57b,d0
+    addi.l #$bb40e62d,d0
+    rol.l #6,d0
+    move.l  d0,previous_random
+    rts
+    
 ; what: clears a plane of any width (ATM not using blitter)
 ; args:
 ; < A1: dest
@@ -1328,7 +1386,25 @@ update_ghosts
     move.w  mode(a4),d0
     cmp.w   #MODE_FRIGHT,d0
     bne.b   .no_fright
-    ; fright mode: TODO
+    bsr random
+    and.w   #3,d0   ; 4 directions to pick from
+    ;blitz
+    lea     .direction_clockwise_table(pc),a0
+    add.w   d0,d0
+    add.w   d0,a0
+    moveq.w #3,d0
+    moveq.l #0,d1
+.try_dir
+    move.b  (a0),d1
+    addq.l  #2,a0
+    btst    d1,d3
+    bne.b   .free_direction
+    dbf     d0,.try_dir
+    illegal     ; should not have 4 directions blocked, not possible
+.free_direction
+    moveq   #0,d0
+    move.b  (-1,a0),d0      ; translate to actual direction enumerate
+    move.w  d0,direction(a4)
     bra.b   .tile_change_done
 .no_fright:
     move.l  a4,a0
@@ -1337,57 +1413,64 @@ update_ghosts
     lea no_direction_choice_table(pc),a0
     move.b   (a0,d3.w),d4
     bne.b   .one_direction_only
+    ; ghost can chose several paths
     ; try to select the best direction to reach the target
+
     move.w  d3,d0       ; get possible directions back
     move.w  xpos(a4),d2
     move.w  ypos(a4),d3
     lsr.w   #3,d2
-    lsr.w   #3,d3
+    lsr.w   #3,d3       ; current tile
+    movem.w d2-d3,-(a7)
     ; now it's time to check the possible tiles
     ; and their distance to target
     ; priority: up, left, down, right
-    move.w  target_xtile(a4),d4
-    move.w  target_ytile(a4),d5
     moveq.l #-1,d7      ; max distance
     btst    #DIRB_UP,d0
     beq.b   .no_test_up
-    subq.w  #1,d5   ; tile up
+    move.w  target_xtile(a4),d4
+    move.w  target_ytile(a4),d5
+    subq.w  #1,d3   ; tile up
     bsr .compute_square_distance
     move.l   d6,d7              ; store min distance (only one distance computed)
     move.w  #UP,direction(a4)
 .no_test_up
-    move.w  target_xtile(a4),d4
-    move.w  target_ytile(a4),d5
     btst    #DIRB_LEFT,d0
     beq.b   .no_test_left
-    subq.w  #1,d4   ; tile left
+    move.w  target_xtile(a4),d4
+    move.w  target_ytile(a4),d5
+    movem.w (a7),d2-d3
+    subq.w  #1,d2   ; tile left
     bsr .compute_square_distance
     cmp.l   d6,d7
     bcs.b   .no_test_left
     move.w  #LEFT,direction(a4)
     move.l  d6,d7
 .no_test_left
-    move.w  target_xtile(a4),d4
-    move.w  target_ytile(a4),d5
     btst    #DIRB_DOWN,d0
     beq.b   .no_test_down
-    addq.w  #1,d5   ; tile down
+    move.w  target_xtile(a4),d4
+    move.w  target_ytile(a4),d5
+    movem.w (a7),d2-d3
+    addq.w  #1,d3   ; tile down
     bsr .compute_square_distance
     cmp.l   d6,d7
     bcs.b   .no_test_down
     move.w  #DOWN,direction(a4)
     move.l  d6,d7
 .no_test_down
-    move.w  target_xtile(a4),d4
-    move.w  target_ytile(a4),d5
     btst    #DIRB_RIGHT,d0
     beq.b   .no_test_right
-    addq.w  #1,d4   ; tile right
+    move.w  target_xtile(a4),d4
+    move.w  target_ytile(a4),d5
+    movem.w (a7),d2-d3
+    addq.w  #1,d2   ; tile right
     bsr .compute_square_distance
     cmp.l   d6,d7
     bcs.b   .no_test_right
     move.w  #RIGHT,direction(a4)
 .no_test_right
+    addq.l  #4,a7
     bra.b   .tile_change_done
     
 .one_direction_only
@@ -1395,6 +1478,15 @@ update_ghosts
     move.w  d4,direction(a4)
     bra.b   .tile_change_done
     
+; 2 times the clockwise cycle so we can pick
+; a clockwise sequence randomly by picking a 0-3 random number
+.direction_clockwise_table
+    REPT    2
+    dc.b    DIRB_RIGHT,RIGHT
+    dc.b    DIRB_DOWN,DOWN
+    dc.b    DIRB_LEFT,LEFT
+    dc.b    DIRB_UP,UP
+    ENDR
     
 ; what: computes square distance using square
 ; tables (faster than multiplying)
@@ -1426,25 +1518,6 @@ update_ghosts
     add.l   d5,d6   ; may be > 65536
     rts
     
-; < D2: XT1
-; < D3: YT1
-; < D4: XT2
-; < D5: YT2
-; > D6: square distance
-.compute_square_distance_old   
-    swap    d4
-    clr.w   d4
-    swap    d4
-    sub.w   d2,d4
-    muls.w  d4,d4
-    swap    d5
-    clr.w   d5
-    swap    d5
-    sub.w   D3,D5
-    muls.w  D5,D5
-    move.l  d5,d6
-    add.l   d4,d6
-    rts
     
 .set_speed_vector
     lea grid_align_table(pc),a2
@@ -1654,6 +1727,10 @@ update_ghosts
     rts
     
 .new_mode
+    move.w   mode_counter(a4),d1
+    cmp.w   #6,d1
+    beq.b   .maxed
+    
     move.w  mode(a4),d0 ; old mode
     cmp.w   #MODE_FRIGHT,d0
     beq.b   .from_fright
@@ -1669,12 +1746,9 @@ update_ghosts
     ; change mode
     move.w  d0,mode(a4)
     ; next timer in table   
-    move.w   mode_counter(a4),d0
-    cmp.w   #6,d0
-    beq.b   .maxed
-    add.w   #1,d0
-    move.w  d0,mode_counter(a4)
-.maxed
+    add.w   #1,d1
+    move.w  d1,mode_counter(a4)
+
     ; reload new mode timer
     move.l  a4,a0
     bsr update_ghost_mode_timer
@@ -1683,14 +1757,54 @@ update_ghosts
 .scatter
     move.w  #MODE_SCATTER,D0
     bra.b   .switch_mode
-
+.maxed
+    ; end of sequence: chase mode all the time
+    move.w  #MODE_CHASE,mode(a4)
+    ; just to avoid timer overflow but could be ignored
+    bsr update_ghost_mode_timer
+    bra.b   .mode_done
     
 .from_fright
-    blitz
-    ; TODO
+    ; first, restore normal color palette
+    move.l  palette(a4),a0
+    move.l  color_register(a4),a1
+    move.l  (a0)+,(a1)+
+    move.l  (a0)+,(a1)+
+    ; then resume sequence & target
+    move.l  previous_mode_timer(a4),mode_timer(a4)  ; hack also restores mode
+    move.l  a4,a0
+    lea player(pc),a1
+    bsr update_ghost_target
     bra.b   .mode_done
 
-        
+
+power_pill_taken
+    lea ghosts(pc),a0
+    moveq.w  #3,d0
+.gloop
+    move.l  mode_timer(a0),previous_mode_timer(a0)  ; hack also saves mode
+    move.w  #MODE_FRIGHT,mode(a0)
+    ; set proper fright mode according to current level
+    move.w  #NB_FLASH_FRAMES-1,flash_toggle_timer(a0)
+    move.w  level_number(pc),d1
+    cmp.w   #18,d1
+    bcc.b   .no_time
+    add.w   d1,d1
+    add.w   d1,d1
+    lea     fright_table(pc),a1
+    move.w  (a1)+,mode_timer(a0)
+    move.w  (a1)+,flash_timer(a0)
+    clr.w   flashing_as_white(a0)
+    bra.b   .next
+.no_time
+    clr.w  mode_timer(a0)
+    clr.w  flash_timer(a0)
+    clr.w   flash_toggle_timer(a0)
+.next
+    add.l   #Ghost_SIZEOF,a0
+    dbf d0,.gloop
+    rts
+    
 update_pac
     tst.w   bonus_timer
     beq.b   .no_fruit
@@ -1806,6 +1920,8 @@ update_pac
     ; bonus (fruit)
     bra.b   .score
 .power
+    bsr power_pill_taken
+
     move.b  #3,still_timer(a4)      ; still during 3 frames
     ; linear search find the relevant powerdot
     lea  powerdots(pc),a0
@@ -2408,6 +2524,8 @@ write_string
     include ReadJoyPad.s
     ; variables
     
+previous_random
+    dc.l    0
 joystick_state
     dc.l    0
 ready_timer
@@ -2479,6 +2597,19 @@ pac_anim_\1_end
     PAC_ANIM_TABLE  left
     PAC_ANIM_TABLE  up
     PAC_ANIM_TABLE  down
+
+ghost_eyes_table
+    dc.l    ghost_eyes_0
+    dc.l    ghost_eyes_1
+    dc.l    ghost_eyes_2
+    dc.l    ghost_eyes_3
+    
+frightened_ghost_blue_frame_table
+    dc.l    frightened_ghost_blue_0
+    dc.l    frightened_ghost_blue_1
+frightened_ghost_white_frame_table
+    dc.l    frightened_ghost_white_0
+    dc.l    frightened_ghost_white_1
     
     
 maze_data:
@@ -2564,6 +2695,33 @@ no_direction_choice_table:
     ENDR
     even
     
+    ; fright time + number of flashes. Each flash is 14 frames long
+    ; 4 words: total number of frames for fright mode,
+    ;          number of frames to start flashing
+DEF_FRIGHT_ENTRY:MACRO
+    dc.w    NB_TICKS_PER_SEC*\1,NB_TICKS_PER_SEC*\1-NB_FLASH_FRAMES*\2
+    ENDM
+    
+fright_table
+    DEF_FRIGHT_ENTRY    6,5
+    DEF_FRIGHT_ENTRY    5,5
+    DEF_FRIGHT_ENTRY    4,5
+    DEF_FRIGHT_ENTRY    3,5
+    DEF_FRIGHT_ENTRY    2,5
+    DEF_FRIGHT_ENTRY    5,5
+    DEF_FRIGHT_ENTRY    2,5
+    DEF_FRIGHT_ENTRY    2,5
+    DEF_FRIGHT_ENTRY    1,3
+    DEF_FRIGHT_ENTRY    5,5
+    DEF_FRIGHT_ENTRY    2,5
+    DEF_FRIGHT_ENTRY    1,3
+    DEF_FRIGHT_ENTRY    1,3
+    DEF_FRIGHT_ENTRY    3,5
+    DEF_FRIGHT_ENTRY    1,3
+    DEF_FRIGHT_ENTRY    1,3
+    DEF_FRIGHT_ENTRY    0,0
+    DEF_FRIGHT_ENTRY    1,3    ; level 18
+
 timer_table:
     dc.l    level_1
     dc.l    level2_to_4
@@ -2578,7 +2736,7 @@ level_1:
     dc.w    NB_TICKS_PER_SEC*20	
     dc.w    NB_TICKS_PER_SEC*5	
     dc.w    NB_TICKS_PER_SEC*20	
-    dc.w    NB_TICKS_PER_SEC*5	
+    dc.w    NB_TICKS_PER_SEC*5  ; scatter	
 
 level2_to_4:
     dc.w    NB_TICKS_PER_SEC*7	  
@@ -2778,10 +2936,10 @@ dot_table_read_only:
 powerdots
     ds.l    4
 
-; for frightened ghosts & eyes
-frightened_ghosts_blue
+; palette is different for frightened ghosts & eyes
+frightened_ghosts_blue_palette
     include "frightened_ghost_blue.s"
-frightened_ghosts_white
+frightened_ghosts_white_palette
     include "frightened_ghost_white.s"
 ghost_eyes
     include "ghost_eyes.s"
@@ -2911,7 +3069,37 @@ bonus_pics:
     incbin  "bell.bin"
     incbin  "key.bin" 
 
+frightened_ghost_blue_0
+    dc.l    0
+    incbin  "frightened_ghost_blue_0.bin"
 
+frightened_ghost_blue_1
+    dc.l    0
+    incbin  "frightened_ghost_blue_1.bin"
+
+frightened_ghost_white_0
+    dc.l    0
+    incbin  "frightened_ghost_white_0.bin"
+
+frightened_ghost_white_1
+    dc.l    0
+    incbin  "frightened_ghost_white_1.bin"
+
+
+    
+ghost_eyes_0
+    dc.l    0
+    incbin  "ghost_eyes_0.bin"
+ghost_eyes_1
+    dc.l    0
+    incbin  "ghost_eyes_1.bin"
+ghost_eyes_2
+    dc.l    0
+    incbin  "ghost_eyes_2.bin"
+ghost_eyes_3
+    dc.l    0
+    incbin  "ghost_eyes_3.bin"
+    
     
 DECL_GHOST:MACRO
 \1_ghost_frame_table:
