@@ -1,4 +1,5 @@
 X=68,Y=46: red ghost sprite seen double!!! (winuae???)
-left/down/left/up/+ misses right turn???
 frightmode: wrong flash
-frightmode: wrong color when mode is off
+powerdot keeps flashing when taken
+frightened ghost speed not applied to ghost...
+same for tunnel

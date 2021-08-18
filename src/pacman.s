@@ -36,6 +36,7 @@
 CIAAPRA = $BFE001
 
     STRUCTURE   SpritePalette,0
+    UWORD   color0
     UWORD   color1
     UWORD   color2
     UWORD   color3
@@ -63,6 +64,8 @@ CIAAPRA = $BFE001
 	STRUCT      palette,SpritePalette_SIZEOF
     APTR     behaviour
     APTR     frame_table
+    APTR     frightened_ghost_white_frame_table
+    APTR     frightened_ghost_blue_frame_table
     APTR     copperlist_address
     APTR     color_register
     UWORD    home_corner_xtile
@@ -424,6 +427,8 @@ init_ghosts
     move.w  #LEFT,direction(a0)
     move.w  #8,frame(a0)
     move.l  #red_ghost_frame_table,frame_table(a0)
+    move.l  #red_frightened_ghost_white_frame_table,frightened_ghost_white_frame_table(a0)
+    move.l  #red_frightened_ghost_blue_frame_table,frightened_ghost_blue_frame_table(a0)
     move.w  #(NB_TILES_PER_LINE-6),home_corner_xtile(a0)
     bsr     update_ghost_target
     move.w  #-1,h_speed(a0)
@@ -434,6 +439,8 @@ init_ghosts
     move.w  #0,frame(a0)
     move.w  #2,home_corner_xtile(a0)
     move.l  #pink_ghost_frame_table,frame_table(a0)
+    move.l  #pink_frightened_ghost_white_frame_table,frightened_ghost_white_frame_table(a0)
+    move.l  #pink_frightened_ghost_blue_frame_table,frightened_ghost_blue_frame_table(a0)
     bsr     update_ghost_target
     move.w  #0,home_corner_ytile(a0)
     move.w  #1,v_speed(a0)
@@ -444,6 +451,8 @@ init_ghosts
     move.w  #UP,direction(a0)
     move.w  #0,frame(a0)
     move.l  #cyan_ghost_frame_table,frame_table(a0)
+    move.l  #cyan_frightened_ghost_white_frame_table,frightened_ghost_white_frame_table(a0)
+    move.l  #cyan_frightened_ghost_blue_frame_table,frightened_ghost_blue_frame_table(a0)
     move.w  #(NB_TILES_PER_LINE-4),home_corner_xtile(a0)
     move.w  #(NB_TILE_LINES+1),home_corner_ytile(a0) 
     bsr update_ghost_target
@@ -455,6 +464,8 @@ init_ghosts
     move.w  #UP,direction(a0)
     move.w  #0,frame(a0)
     move.l  #orange_ghost_frame_table,frame_table(a0)
+    move.l  #orange_frightened_ghost_white_frame_table,frightened_ghost_white_frame_table(a0)
+    move.l  #orange_frightened_ghost_blue_frame_table,frightened_ghost_blue_frame_table(a0)
     move.w  #(NB_TILE_LINES+1),home_corner_ytile(a0)
     bsr update_ghost_target
     move.w  #-1,v_speed(a0)
@@ -473,7 +484,7 @@ red_chase
     lsr.w   #3,d0
     lsr.w   #3,d1
     move.w  d0,target_xtile(a0)
-    move.w  d1,target_ytile(a1)
+    move.w  d1,target_ytile(a0)
     rts
 pink_chase
     rts
@@ -712,7 +723,7 @@ draw_ghosts:
     move.w  mode_timer(a0),d4
     move.l  color_register(a0),a3
     lea     frightened_ghosts_blue_palette(pc),a2
-    lea     frightened_ghost_blue_frame_table(pc),a1
+    move.l     frightened_ghost_blue_frame_table(a0),a1
     cmp.w   flash_timer(a0),d4
     bcs.b   .no_flashing
     ; now check the flash toggle
@@ -726,7 +737,7 @@ draw_ghosts:
     beq.b   .no_toggle
     ; white flashing
     lea     frightened_ghosts_white_palette(pc),a2
-    lea     frightened_ghost_white_frame_table(pc),a1    
+    move.l  frightened_ghost_white_frame_table(a0),a1    
 .no_toggle
     move.w  d4,flash_toggle_timer(a0)
 .no_flashing
@@ -1396,14 +1407,14 @@ update_ghosts
     moveq.l #0,d1
 .try_dir
     move.b  (a0),d1
-    addq.l  #2,a0
     btst    d1,d3
     bne.b   .free_direction
+    addq.l  #2,a0
     dbf     d0,.try_dir
     illegal     ; should not have 4 directions blocked, not possible
 .free_direction
     moveq   #0,d0
-    move.b  (-1,a0),d0      ; translate to actual direction enumerate
+    move.b  (1,a0),d0      ; translate to actual direction enumerate
     move.w  d0,direction(a4)
     bra.b   .tile_change_done
 .no_fright:
@@ -1412,10 +1423,14 @@ update_ghosts
     ; optimization: where there's only one possible direction, skip
     lea no_direction_choice_table(pc),a0
     move.b   (a0,d3.w),d4
-    bne.b   .one_direction_only
-    ; ghost can chose several paths
+    bpl.b   .one_direction_only
+;    cmp.w   #MODE_CHASE,mode(a4)
+;    bne .noch
+;    blitz
+;    nop
+;.noch
+    ; ghost can chose several paths/routes
     ; try to select the best direction to reach the target
-
     move.w  d3,d0       ; get possible directions back
     move.w  xpos(a4),d2
     move.w  ypos(a4),d3
@@ -1508,7 +1523,7 @@ update_ghosts
     move.w  (a0,d4.w),d6    ; still < 65536
     sub.w   D3,D5
     bpl.b   .pos2
-    neg.w   d4
+    neg.w   d5
 .pos2
     add.w  D5,D5
     move.w  (a0,d5.w),d5
@@ -1727,13 +1742,16 @@ update_ghosts
     rts
     
 .new_mode
-    move.w   mode_counter(a4),d1
-    cmp.w   #6,d1
-    beq.b   .maxed
+    ;;blitz
     
     move.w  mode(a4),d0 ; old mode
     cmp.w   #MODE_FRIGHT,d0
     beq.b   .from_fright
+    
+    move.w   mode_counter(a4),d1
+    cmp.w   #6,d1
+    beq.b   .maxed
+
     cmp.w   #MODE_SCATTER,d0
     beq.b   .chase
     cmp.w   #MODE_CHASE,d0
@@ -1765,8 +1783,8 @@ update_ghosts
     bra.b   .mode_done
     
 .from_fright
-    ; first, restore normal color palette
-    move.l  palette(a4),a0
+    ; first, restore normal color palette (frames are restored by the animation)
+    lea  palette(a4),a0
     move.l  color_register(a4),a1
     move.l  (a0)+,(a1)+
     move.l  (a0)+,(a1)+
@@ -1792,9 +1810,11 @@ power_pill_taken
     add.w   d1,d1
     add.w   d1,d1
     lea     fright_table(pc),a1
-    move.w  (a1)+,mode_timer(a0)
+    move.w  (a1)+,d2
+    move.w  d2,mode_timer(a0)
     move.w  (a1)+,flash_timer(a0)
     clr.w   flashing_as_white(a0)
+    move.b  #1,reverse_flag(a0)
     bra.b   .next
 .no_time
     clr.w  mode_timer(a0)
@@ -1803,9 +1823,16 @@ power_pill_taken
 .next
     add.l   #Ghost_SIZEOF,a0
     dbf d0,.gloop
+    
+    ; also store global fright timer for pacman speed
+    move.w  d2,fright_timer
     rts
     
 update_pac
+    tst.w   fright_timer
+    beq.b   .no_fright1
+    sub.w   #1,fright_timer
+.no_fright1
     tst.w   bonus_timer
     beq.b   .no_fruit
     subq.w  #1,bonus_timer
@@ -1837,7 +1864,11 @@ update_pac
     ; store
     move.w  d1,speed_table_index(a4)
     bsr get_global_speed_table
-    ; TODO faster when at least one ghost is in fright mode
+    ; faster when at least one ghost is in fright mode
+    tst.w   fright_timer
+    beq.b   .no_fright
+    add.w   #32,d1      ; pacman is faster when ghosts are frightened
+.no_fright
     move.b  (a1,d1.w),d0    ; speed
     beq.b   .skip_move      ; if zero skip move
     ext.w   d0
@@ -2555,6 +2586,8 @@ bonus_timer
 ; 0: level 1
 level_number
     dc.w    0
+fright_timer
+    dc.w    0
 maze_blink_nb_times
     dc.b    0
 nb_lives
@@ -2604,12 +2637,7 @@ ghost_eyes_table
     dc.l    ghost_eyes_2
     dc.l    ghost_eyes_3
     
-frightened_ghost_blue_frame_table
-    dc.l    frightened_ghost_blue_0
-    dc.l    frightened_ghost_blue_1
-frightened_ghost_white_frame_table
-    dc.l    frightened_ghost_white_0
-    dc.l    frightened_ghost_white_1
+
     
     
 maze_data:
@@ -2680,18 +2708,18 @@ square_table:
 ; truth table to avoid testing for several directions where there's only once choice
 ; (one bit set)
 no_direction_choice_table:
-    dc.b    0   ; 0=not possible
+    dc.b    $ff   ; 0=not possible
     dc.b    RIGHT   ; 1
     dc.b    DOWN   ; 2
-    dc.b    0   ; 3=composite
+    dc.b    $ff   ; 3=composite
     dc.b    LEFT   ; 4=UP
-    dc.b    0   ; 5=composite
-    dc.b    0   ; idem
-    dc.b    0   ; idem
+    dc.b    $ff   ; 5=composite
+    dc.b    $ff   ; idem
+    dc.b    $ff   ; idem
     dc.b    UP   ; 8
     ; all the rest is composite or invalid
     REPT    7
-    dc.b    0
+    dc.b    $ff
     ENDR
     even
     
@@ -3069,21 +3097,6 @@ bonus_pics:
     incbin  "bell.bin"
     incbin  "key.bin" 
 
-frightened_ghost_blue_0
-    dc.l    0
-    incbin  "frightened_ghost_blue_0.bin"
-
-frightened_ghost_blue_1
-    dc.l    0
-    incbin  "frightened_ghost_blue_1.bin"
-
-frightened_ghost_white_0
-    dc.l    0
-    incbin  "frightened_ghost_white_0.bin"
-
-frightened_ghost_white_1
-    dc.l    0
-    incbin  "frightened_ghost_white_1.bin"
 
 
     
@@ -3112,6 +3125,13 @@ DECL_GHOST:MACRO
     dc.l    \1_ghost_6
     dc.l    \1_ghost_7
 \1_ghost_end_frame_table:
+\1_frightened_ghost_blue_frame_table
+    dc.l    \1_frightened_ghost_blue_0
+    dc.l    \1_frightened_ghost_blue_1
+\1_frightened_ghost_white_frame_table
+    dc.l    \1_frightened_ghost_white_0
+    dc.l    \1_frightened_ghost_white_1
+    
     ; all ghosts share the same graphics, only the colors are different
     ; but we need to replicate the graphics 8*4 times because of sprite control word
 \1_ghost_0
@@ -3138,6 +3158,19 @@ DECL_GHOST:MACRO
 \1_ghost_7
     dc.l    0
     incbin  "ghost_7.bin"
+\1_frightened_ghost_blue_0
+    dc.l    0
+    incbin  "frightened_ghost_blue_0.bin"
+\1_frightened_ghost_blue_1
+    dc.l    0
+    incbin  "frightened_ghost_blue_1.bin"
+\1_frightened_ghost_white_0
+    dc.l    0
+    incbin  "frightened_ghost_white_0.bin"
+\1_frightened_ghost_white_1
+    dc.l    0
+    incbin  "frightened_ghost_white_1.bin"
+
     ENDM
         
     DECL_GHOST  red
