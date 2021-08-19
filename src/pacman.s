@@ -80,6 +80,8 @@ CIAAPRA = $BFE001
     UWORD    flash_timer
     UWORD    flash_toggle_timer
     UWORD    flashing_as_white
+    UWORD    pen_timer
+    UWORD    pen_nb_dots
     UBYTE    reverse_flag   ; direction change flag
     UBYTE    pad2
 	LABEL	Ghost_SIZEOF
@@ -132,7 +134,7 @@ X_MAX = (NB_TILES_PER_LINE-1)*8
 
 RED_YSTART_POS = 92+Y_START
 RED_XSTART_POS = 112+X_START
-OTHERS_XSTART_POS = RED_YSTART_POS+24
+OTHERS_YSTART_POS = RED_YSTART_POS+24
 
 BONUS_X_POS = RED_XSTART_POS-24
 BONUS_Y_POS = RED_YSTART_POS+16
@@ -383,14 +385,27 @@ hide_sprites:
     dbf d1,.emptyspr
     rts
 
+; Pinky's dot limit is always set to zero, causing him to leave home immediately when every level begins. 
+; For the first level, Inky has a limit of 30 dots, and Clyde has a limit of 60. This results in Pinky exiting immediately which, in turn,
+; activates Inky's dot counter. His counter must then reach or exceed 30 dots before he can leave the house. Once Inky starts to leave,
+; Clyde's counter (which is still at zero) is activated and starts counting dots.
+; 
+; When his counter reaches or exceeds 60, he may exit.
+; On the second level, Inky's dot limit is changed from 30 to zero, while Clyde's is changed from 60 to 50.
+; Inky will exit the house as soon as the level begins from now on.
+;
+; Starting at level three, all the ghosts have a dot limit of zero for the remainder of the game and
+; will leave the ghost house immediately at the start of every level.
+
 init_ghosts
     lea ghosts(pc),a0
     lea sprites,a1   ; the sprite part of the copperlist
-    lea behaviour_table(pc),a2
+    lea .behaviour_table(pc),a2
     lea game_palette+32(pc),a3  ; the sprite part of the color palette 16-31
     ; shared settings
     moveq.w #3,d7
     lea _custom+color+32,a4
+
 .igloop
     ; copy all 4 colors (back them up)
     move.l (a3)+,palette(a0)
@@ -402,6 +417,8 @@ init_ghosts
     
     clr.w   mode_counter(a0)
     clr.w   speed_table_index(a0)
+    clr.w   pen_timer(a0)
+    clr.w   pen_nb_dots(a0)
     clr.b   reverse_flag(a0)
 
     clr.w   h_speed(a0)
@@ -414,10 +431,33 @@ init_ghosts
     bsr     update_ghost_mode_timer
     move.w  #MODE_SCATTER,mode(a0)
     move.l  (a2)+,behaviour(a0)
-	move.w	#OTHERS_XSTART_POS,ypos(a0)
+	move.w	#OTHERS_YSTART_POS,ypos(a0)
     
     add.l   #Ghost_SIZEOF,a0
     dbf d7,.igloop
+    
+    ; dot counters
+    
+    moveq.w #3,d7
+    lea ghosts(pc),a0
+    move.w  level_number(pc),d0
+    bne.b   .no_first_level
+    lea     .dot_counter_table_level_1(pc),a2
+    bra.b   .igloop2
+.no_first_level
+    cmp.w   #1,d0
+    bne.b   .skip_dot_init
+    lea     .dot_counter_table_level_2(pc),a2
+    bra.b   .igloop2
+.no_second_level
+
+
+.igloop2
+    move.w  (a2)+,pen_nb_dots(a0)
+    add.l   #Ghost_SIZEOF,a0
+    dbf d7,.igloop2
+.skip_dot_init    
+    
     
     ; specific settings
     lea ghosts(pc),a0
@@ -471,31 +511,94 @@ init_ghosts
     move.w  #-1,v_speed(a0)
 
     rts
+    
+.dot_counter_table_level_1
+    dc.w    0,0,30,60
+.dot_counter_table_level_2
+    dc.w    0,0,0,50
+    
 
-behaviour_table
+.behaviour_table
     dc.l    red_chase,pink_chase,cyan_chase,orange_chase
 
+GET_PLAYER_TILE:MACRO
+
+    ENDM
+
+; all 4 "chase" functions have the same in/out params    
 ; < A0: ghost structure
 ; < A1: player structure
+; < D0: player tile x
+; < D1: player tile y
+; > D0, D1: target tile
+; trashes: none
 red_chase
-    ; simple: get player tile
-    move.w  xpos(a1),d0
-    move.w  ypos(a1),d1
-    lsr.w   #3,d0
-    lsr.w   #3,d1
-    move.w  d0,target_xtile(a0)
-    move.w  d1,target_ytile(a0)
+    ; player tile is the target, just return
     rts
+
 pink_chase
-    rts
-orange_chase
+    ; according to pac-man direction, add an offset of 4 tiles
+    move.l a2,-(a7)
+    lea     pinky_direction_offset_table(pc),a2
+    add.w   direction(a1),a2   ; each direction is an enum 0,4,8,12 already
+    add.w   (a2)+,d0
+    add.w   (a2)+,d1
+    move.l (a7)+,a2
     rts
 cyan_chase
+    ; according to pac-man direction, add an offset of 2 tiles to the temp tile
+    movem.l d2/a2,-(a7)
+    lea     inky_direction_offset_table(pc),a2
+    add.w   direction(a1),a2   ; each direction is an enum 0,4,8,12 already
+    add.w   (a2)+,d0
+    add.w   (a2)+,d1
+    
+    ; now the position of the red ghost comes to play
+    lea red_ghost(pc),a2
+    ; algebraic distance for X and Y between temp target & red ghost tile
+    move.w  xpos(a2),d2
+    sub.w   d0,d2
+    ; sub that distance to create symmetrical point
+    sub.w   d2,d0
+    ; for Y
+    move.w  ypos(a2),d2
+    sub.w   d1,d2
+    sub.w   d2,d1
+    ; that's it! simple, yet effective
+    movem.l (a7)+,d2/a2
     rts
     
+orange_chase
+    movem.l a0/d2-d6,-(a7)      ; uses an awful lot of registers
+    ; compute distance between clyde and pacman
+    move.w  d0,d2       ; pacman XY tile
+    move.w  d1,d3
+    move.w  xpos(a0),d4 ; ghost XY tile
+    move.w  ypos(a0),d5
+    bsr compute_square_distance
+    ; euclidian distance threshold is 8 tiles
+    cmp.l   #8*8,d6
+    movem.l (a7)+,a0/d2-d6      ; restore registers now, we need a0 back
+    bcc.b   .simple     ; run to pacman tile if far away enough
+    ; close to pacman: target is the home tile, like scatter mode
+    move.w  home_corner_xtile(a0),d0
+    move.w  home_corner_xtile(a1),d1
+.simple
+    rts
+    
+pinky_direction_offset_table
+    dc.w    4,0     ; right
+    dc.w    -4,0    ; left
+    dc.w    -4,4    ; up: left offset is added, this is an original game bug
+    dc.w    4,0     ; down
+inky_direction_offset_table
+    dc.w    2,0     ; right
+    dc.w    -2,0    ; left
+    dc.w    -2,2    ; up: left offset is added, this is an original game bug
+    dc.w    2,0     ; down
+
 ; < A0: ghost structure
-; < A1: player structure
-; trashes: D0 & D1
+; trashes: A1, D0 & D1
 update_ghost_target
     move.w  mode(a0),d0
     cmp.w   #MODE_SCATTER,d0
@@ -508,10 +611,17 @@ update_ghost_target
     move.l  home_corner_xtile(a0),target_xtile(a0)  ; hack copy x & y at once
     rts
 .chase:
+    lea player(pc),a1
     pea .next(pc)
+    move.w  xpos(a1),d0
+    move.w  ypos(a1),d1
+    lsr.w   #3,d0
+    lsr.w   #3,d1
     move.l  behaviour(a0),-(a7)
     rts
 .next
+    move.w  d0,target_xtile(a0)
+    move.w  d1,target_ytile(a0)
     rts
     
 ; < A0: ghost structure
@@ -1244,9 +1354,17 @@ level3_interrupt:
     beq.b   .blitter
     ; copper
     bsr draw_all
-    bsr draw_debug
+    ;;bsr draw_debug
     bsr update_all
-
+    move.w  vbl_counter,d0
+    addq.w  #1,d0
+    cmp.w   #5,d0
+    bne.b   .normal
+    ; update a second time, simulate 60Hz
+    bsr update_all
+    moveq.w #0,d0    
+.normal
+    move.w  d0,vbl_counter
     move.w  #$0010,(intreq,a5) 
     movem.l (a7)+,d0-a6
     rte    
@@ -1262,6 +1380,8 @@ level3_interrupt:
     movem.l (a7)+,d0-a6
     rte
 
+vbl_counter:
+    dc.w    0
 mouse:	
 	;move.w	#$0F0,$DFF180
 	BTST #6,$BFE001
@@ -1321,8 +1441,9 @@ remove_bonus
 
 update_ghosts
     lea ghosts(pc),a4
-    ; only red ATM
-    
+    moveq.w #3,d7
+.gloop
+    move.w  d7,-(a7)
     ; decrease mode timer
     move.w  mode_timer(a4),d0
     subq.w  #1,d0
@@ -1331,21 +1452,57 @@ update_ghosts
 .mode_done
     move.l  a4,a0
     bsr get_ghost_move_speed
-    tst   d0
-    beq.b   .ghost_done     ; no move for now
+    subq.w   #1,d0          ; sub for dbf
+    bmi.b   .ghost_done     ; 0: no move for now
     ; now ghost can move once or twice
-    move.w  d0,d7
-    subq.w  #1,d7
 .move_loop
+    move.w  d0,-(a7)
     move.w  frame(a4),d1
     addq.w  #1,d1
     and.w   #$F,d1
     move.w  d1,frame(a4)
- 
+
+    ; check if ghost is in the pen
     move.w  xpos(a4),d0
     move.w  ypos(a4),d1
     move.w  d0,d2
     move.w  d1,d3
+
+    ; check if ghost is in the pen
+    bsr collides_with_maze
+    cmp.b   #P,d0
+    bne.b   .no_pen
+
+    ; just moves up and down
+    move.w  direction(a4),d6
+    cmp.w   #UP,d6
+    beq.b   .pen_up
+    cmp.w   #DOWN,d6
+    beq.b   .pen_down
+    bra.b   .next_ghost     ; TEMP lateral in pen
+.pen_down    
+    cmp.w   #OTHERS_YSTART_POS+5,d3
+    bne.b   .move_pen_down
+    ; toggle direction
+    move.w  #UP,direction(a4)
+    sub.w   #1,ypos(a4)
+    bra.b   .next_ghost
+.move_pen_down:
+    add.w   #1,ypos(a4)
+    bra.b   .next_ghost
+.pen_up
+    cmp.w   #OTHERS_YSTART_POS-6,d3
+    bne.b   .move_pen_up
+    ; toggle direction
+    move.w  #DOWN,direction(a4)
+    add.w   #1,ypos(a4)
+    bra.b   .next_ghost
+.move_pen_up:
+    sub.w   #1,ypos(a4)
+    bra.b   .next_ghost
+.no_pen
+    move.w  d2,d0
+    move.w  d3,d1
     lsr.w   #3,d2       ; 8 divide, now this is the tile
     lsr.w   #3,d3   ; 8 divide
 
@@ -1373,10 +1530,14 @@ update_ghosts
     cmp.w   d3,d5
     bne.b   .tile_change
 .tile_change_done
-    bra.b   .set_speed_vector
+    bsr.b   .set_speed_vector
 .next_ghost
-    dbf d7,.move_loop
+    move.w  (a7)+,d0
+    dbf d0,.move_loop
 .ghost_done
+    move.w  (a7)+,d7
+    add.l   #Ghost_SIZEOF,a4
+    dbf d7,.gloop
     rts
     
 .tile_change
@@ -1399,7 +1560,7 @@ update_ghosts
     bne.b   .no_fright
     bsr random
     and.w   #3,d0   ; 4 directions to pick from
-    ;blitz
+
     lea     .direction_clockwise_table(pc),a0
     add.w   d0,d0
     add.w   d0,a0
@@ -1446,7 +1607,7 @@ update_ghosts
     move.w  target_xtile(a4),d4
     move.w  target_ytile(a4),d5
     subq.w  #1,d3   ; tile up
-    bsr .compute_square_distance
+    bsr compute_square_distance
     move.l   d6,d7              ; store min distance (only one distance computed)
     move.w  #UP,direction(a4)
 .no_test_up
@@ -1456,7 +1617,7 @@ update_ghosts
     move.w  target_ytile(a4),d5
     movem.w (a7),d2-d3
     subq.w  #1,d2   ; tile left
-    bsr .compute_square_distance
+    bsr compute_square_distance
     cmp.l   d6,d7
     bcs.b   .no_test_left
     move.w  #LEFT,direction(a4)
@@ -1468,7 +1629,7 @@ update_ghosts
     move.w  target_ytile(a4),d5
     movem.w (a7),d2-d3
     addq.w  #1,d3   ; tile down
-    bsr .compute_square_distance
+    bsr compute_square_distance
     cmp.l   d6,d7
     bcs.b   .no_test_down
     move.w  #DOWN,direction(a4)
@@ -1480,7 +1641,7 @@ update_ghosts
     move.w  target_ytile(a4),d5
     movem.w (a7),d2-d3
     addq.w  #1,d2   ; tile right
-    bsr .compute_square_distance
+    bsr compute_square_distance
     cmp.l   d6,d7
     bcs.b   .no_test_right
     move.w  #RIGHT,direction(a4)
@@ -1502,37 +1663,10 @@ update_ghosts
     dc.b    DIRB_LEFT,LEFT
     dc.b    DIRB_UP,UP
     ENDR
-    
-; what: computes square distance using square
-; tables (faster than multiplying)
-; < D2: XT1
-; < D3: YT1
-; < D4: XT2
-; < D5: YT2
-; > D6: square distance
-; trashes: A0, D4, D5
-
-.compute_square_distance
-    lea  square_table(pc),a0
-    moveq.l   #0,d6
-    sub.w   d2,d4
-    bpl.b   .pos1
-    neg.w   d4
-.pos1
-    add.w   d4,d4
-    move.w  (a0,d4.w),d6    ; still < 65536
-    sub.w   D3,D5
-    bpl.b   .pos2
-    neg.w   d5
-.pos2
-    add.w  D5,D5
-    move.w  (a0,d5.w),d5
-    swap    d5
-    clr.w   d5
-    swap    d5
-    add.l   d5,d6   ; may be > 65536
-    rts
-    
+   
+.is_in_pen
+        dc.b    0
+        even
     
 .set_speed_vector
     lea grid_align_table(pc),a2
@@ -1541,10 +1675,6 @@ update_ghosts
     ; set speed vector when aligned with grid
     ; direction is already set properly, no need to check walls again
     ; (ghost faces the direction it's going to take)
-    ; if speed is vertical, check if aligned horizontally with grid
-;    move.w  v_speed(a4),d4
-    ; now check if speeds are applicable to ghost
-;    beq.b   .no_vmove   ; not opposed to direction change
     ; are we x-aligned?
     move.w  d1,d2
     add.w   d1,d1
@@ -1553,10 +1683,6 @@ update_ghosts
     bne.b   .no_dirchange
 .no_vmove    
     move.w  ypos(a4),d1
-    ; if speed is horizontal, check if aligned vertically with grid
-;    move.w  h_speed(a4),d4
-    ; now check if speeds are applicable to ghost
-;    beq.b   .change_direction       ; speed=0: okay
     ; are we y-aligned?
     move.w  d1,d2
     add.w   d1,d1
@@ -1791,12 +1917,47 @@ update_ghosts
     ; then resume sequence & target
     move.l  previous_mode_timer(a4),mode_timer(a4)  ; hack also restores mode
     move.l  a4,a0
-    lea player(pc),a1
     bsr update_ghost_target
     bra.b   .mode_done
 
+; what: computes square distance using square
+; tables (faster than multiplying)
+; < D2: XT1
+; < D3: YT1
+; < D4: XT2
+; < D5: YT2
+; > D6: square distance
+; trashes: A0, D4, D5
+; the register trashing looks ugly but actually this is done
+; quite frequently when ghosts choose directions so it's adapted to that
 
+compute_square_distance
+    lea  square_table(pc),a0
+    moveq.l   #0,d6
+    sub.w   d2,d4
+    bpl.b   .pos1
+    neg.w   d4
+.pos1
+    add.w   d4,d4
+    move.w  (a0,d4.w),d6    ; still < 65536
+    sub.w   D3,D5
+    bpl.b   .pos2
+    neg.w   d5
+.pos2
+    add.w  D5,D5
+    move.w  (a0,d5.w),d5
+    swap    d5
+    clr.w   d5
+    swap    d5
+    add.l   d5,d6   ; may be > 65536
+    rts
+    
+; what: sets game state when a power pill has been taken
+; trashes: A0,A1,D0,D1
 power_pill_taken
+    move.l  d2,-(a7)
+    ; resets next ghost eaten score
+    move.l  #200,next_ghost_score
     lea ghosts(pc),a0
     moveq.w  #3,d0
 .gloop
@@ -1826,6 +1987,7 @@ power_pill_taken
     
     ; also store global fright timer for pacman speed
     move.w  d2,fright_timer
+    move.l (a7)+,d2
     rts
     
 update_pac
@@ -1951,8 +2113,11 @@ update_pac
     ; bonus (fruit)
     bra.b   .score
 .power
+    ; save A1
+    move.l  A1,A2
     bsr power_pill_taken
-
+    move.l  A2,A1
+    
     move.b  #3,still_timer(a4)      ; still during 3 frames
     ; linear search find the relevant powerdot
     lea  powerdots(pc),a0
@@ -2583,6 +2748,8 @@ bonus_level_score:  ; *10
     dc.w    10,30,50,50,70,70,100,100,200,200,300,300,500
 bonus_timer
     dc.w    0
+next_ghost_score
+    dc.l    0
 ; 0: level 1
 level_number
     dc.w    0
@@ -2792,7 +2959,7 @@ score_frame_table:
 ; < A0: ghost structure
 ; > D0.W: 0,1,2 depending on level, mode, etc...
 ; trashes: nothing
-get_ghost_move_speed:
+get_ghost_move_speed:   
     movem.l  d1-d2/a1/a4,-(a7)
     move.l  a0,a4
     move.w  speed_table_index(a4),d1
@@ -2813,19 +2980,23 @@ get_ghost_move_speed:
     bra.b   .tunnel_test
 .fright:
     move.w  #3*16,d2
-    
+    bra.b   .no_slow
 .tunnel_test
-    ; ok but are we in a tunnel?
+    ; ok but are we in a tunnel or pen
     move.w  xpos(a4),d0
-    move.w  xpos(a4),d1
+    move.w  ypos(a4),d1
     bsr collides_with_maze
     cmp.b   #T,d0
-    bne.b   .no_tunnel
+    beq.b   .tunnel
+    cmp.b   #P,d0
+    bne.b   .no_slow
+.tunnel
     move.w  #4*16,d2
     
-.no_tunnel
+.no_slow
     bsr get_global_speed_table
     move.w  speed_table_index(a4),d0
+    add.w   d2,d0
     move.b  (a1,d0.w),d0            ; get speed index
     ext.w   d0
     movem.l (a7)+,d1-d2/a1/a4
