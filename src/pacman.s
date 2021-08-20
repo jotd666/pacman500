@@ -915,6 +915,8 @@ draw_all
     bsr write_string
     ;;bra.b   .draw_complete
 .ready_off
+    bsr   draw_ghosts
+
     ; draw pacman
     lea player(pc),a2
     move.w  direction(a2),d0
@@ -978,7 +980,6 @@ draw_all
     ; set proper positions for ghosrs
     ENDC
     
-    bsr   draw_ghosts
     
     ; timer not running, animate
     move.w  power_dot_timer(pc),d0
@@ -1468,11 +1469,35 @@ update_ghosts
     move.w  d0,d2
     move.w  d1,d3
 
-    ; check if ghost is in the pen
+    ; check if ghost is in the pen, part 1 quickcheck for the pen exit zone
+    ; (which doesn't trigger the pen tile test when exiting)
+    cmp.w   #RED_XSTART_POS,d0
+    bne.b   .test_pen_tile
+
+    cmp.w   #RED_YSTART_POS,d1
+    bcs.b   .no_pen     ; above red start: not in pen
+    bne.b   .in_pen_test_2
+    ; check if was in the pen by checking direction
+    cmp.w   #UP,direction(a4)
+    bne.b   .no_pen     ; was just passing by
+    ; now just exited the pen: go left
+    move.w  #LEFT,direction(a4)
+    move.w  #-1,h_speed(a4)
+    move.w  #0,v_speed(a4)
+    bra.b   .no_pen
+.in_pen_test_2
+    ; below red start, see if currenty-48 is above red start
+    sub.w   #16*3,d1
+    cmp.w   #RED_YSTART_POS,d1
+    bcs.b   .in_pen     ; in the middle part of pen or exiting it
+    ; check inside pen
+    move.w  d3,d1
+.test_pen_tile
+    ; check if ghost is in the pen, part 2
     bsr collides_with_maze
     cmp.b   #P,d0
     bne.b   .no_pen
-
+.in_pen
     ; just moves up and down
     move.w  direction(a4),d6
     cmp.w   #UP,d6
@@ -1493,7 +1518,15 @@ update_ghosts
 .pen_up
     cmp.w   #OTHERS_YSTART_POS-6,d3
     bne.b   .move_pen_up
+    ; see if number of dots is 0 in which case exit
+    bsr .can_exit_pen
+    tst d0
+    beq.b   .still_inside
+    
+    sub.w   #1,ypos(a4)
+    bra.b   .next_ghost
     ; toggle direction
+.still_inside
     move.w  #DOWN,direction(a4)
     add.w   #1,ypos(a4)
     bra.b   .next_ghost
@@ -1538,6 +1571,17 @@ update_ghosts
     move.w  (a7)+,d7
     add.l   #Ghost_SIZEOF,a4
     dbf d7,.gloop
+    rts
+
+; < A4: ghost struture    
+.can_exit_pen
+    tst.w   pen_nb_dots(a4)
+    beq.b   .exit_pen_ok
+    
+    clr.l   d0
+    rts
+.exit_pen_ok
+    moveq #1,d0
     rts
     
 .tile_change
@@ -3217,11 +3261,13 @@ sprites:
 end_color_copper:
    dc.w  diwstrt,$3081            ;  DIWSTRT
    dc.w  diwstop,$28c1            ;  DIWSTOP
+   ; proper sprite priority: above bitplanes
    dc.w  $0102,$0000            ;  BPLCON1 := 0x0000
    dc.w  $0104,$0024            ;  BPLCON2 := 0x0024
    dc.w  $0092,$0038            ;  DDFSTRT := 0x0038
    dc.w  $0094,$00d0            ;  DDFSTOP := 0x00d0
-   dc.w  240,$FFFE              ; wait until y=240
+   dc.w  $FFDF,$FFFE            ; PAL wait (256)
+   dc.w  $2201,$FFFE            ; PAL extra wait (around 288)
    dc.w intreq,$8010            ; generate copper interrupt
     dc.l    -2
 
