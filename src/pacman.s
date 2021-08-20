@@ -43,6 +43,7 @@ CIAAPRA = $BFE001
     LABEL   SpritePalette_SIZEOF
     
 	STRUCTURE	Character,0
+    ULONG   character_id
 	UWORD	xpos
 	UWORD	ypos
     UWORD   h_speed
@@ -79,11 +80,12 @@ CIAAPRA = $BFE001
     UWORD    mode_counter   ; 0: first scatter, 1: first attack, etc.
     UWORD    flash_timer
     UWORD    flash_toggle_timer
-    UWORD    flashing_as_white
     UWORD    pen_timer
     UWORD    pen_nb_dots
     UBYTE    reverse_flag   ; direction change flag
-    UBYTE    pad2
+    UBYTE    flashing_as_white
+    UBYTE    must_set_fright_sprite
+    UBYTE   pad2
 	LABEL	Ghost_SIZEOF
     
     ;Exec Library Base Offsets
@@ -127,6 +129,11 @@ MAZE_BLINK_TIME = NB_TICKS_PER_SEC/2
 
 NB_FLASH_FRAMES = 14
 
+; matches the pac kill animation
+PLAYER_KILL_TIMER = NB_TICKS_PER_SEC+NB_TICKS_PER_SEC/2+(NB_TICKS_PER_SEC/8)*9+NB_TICKS_PER_SEC/4+NB_TICKS_PER_SEC
+
+
+    
 X_START = 16
 Y_START = 24
 ; tunnel max
@@ -405,7 +412,10 @@ init_ghosts
     ; shared settings
     moveq.w #3,d7
     lea _custom+color+32,a4
-
+    
+    ; init ghost dot count table
+    move.l  #ghosts+2*Ghost_SIZEOF,ghost_which_counts_dots
+    
 .igloop
     ; copy all 4 colors (back them up)
     move.l (a3)+,palette(a0)
@@ -466,6 +476,8 @@ init_ghosts
 	move.w	#RED_YSTART_POS,ypos(a0)
     move.w  #LEFT,direction(a0)
     move.w  #8,frame(a0)
+    move.l  #'BLIN',character_id(a0)
+
     move.l  #red_ghost_frame_table,frame_table(a0)
     move.l  #red_frightened_ghost_white_frame_table,frightened_ghost_white_frame_table(a0)
     move.l  #red_frightened_ghost_blue_frame_table,frightened_ghost_blue_frame_table(a0)
@@ -474,6 +486,7 @@ init_ghosts
     move.w  #-1,h_speed(a0)
     ; pink ghost
     add.l   #Ghost_SIZEOF,a0
+    move.l  #'PINK',character_id(a0)
 	move.w  #RED_XSTART_POS,xpos(a0)
     move.w  #DOWN,direction(a0)
     move.w  #0,frame(a0)
@@ -487,6 +500,7 @@ init_ghosts
 
     add.l   #Ghost_SIZEOF,a0
     ; cyan ghost
+    move.l  #'INKY',character_id(a0)
 	move.w  #(RED_XSTART_POS-16),xpos(a0)
     move.w  #UP,direction(a0)
     move.w  #0,frame(a0)
@@ -499,6 +513,7 @@ init_ghosts
     move.w  #-1,v_speed(a0)
     ; orange ghost
     add.l   #Ghost_SIZEOF,a0
+    move.l  #'CLYD',character_id(a0)
 
 	move.w  #(RED_XSTART_POS+16),xpos(a0)
     move.w  #UP,direction(a0)
@@ -573,8 +588,10 @@ orange_chase
     ; compute distance between clyde and pacman
     move.w  d0,d2       ; pacman XY tile
     move.w  d1,d3
-    move.w  xpos(a0),d4 ; ghost XY tile
+    move.w  xpos(a0),d4
     move.w  ypos(a0),d5
+    lsr.w   #3,d4   ; ghost XY tile
+    lsr.w   #3,d5
     bsr compute_square_distance
     ; euclidian distance threshold is 8 tiles
     cmp.l   #8*8,d6
@@ -645,6 +662,7 @@ update_ghost_mode_timer
     
 init_player
     lea player(pc),a0
+    move.l  #'PACM',character_id(a0)
 	move.w  #RED_XSTART_POS,xpos(a0)
 	move.w	#188+Y_START,ypos(a0)
 	move.w 	#LEFT,direction(a0)
@@ -656,6 +674,7 @@ init_player
     move.w  #0,frame(a0)
     move.w  #50,ready_timer
     clr.l   previous_random
+    move.w  #-1,player_killed_timer
     move.w  #STATE_PLAYING,current_state
     move.l  screen_data+2*NB_BYTES_PER_LINE+SCREEN_PLANE_SIZE,previous_pacman_address  ; valid address for first clear
 	rts	    
@@ -815,6 +834,14 @@ draw_debug
         even
 
 draw_ghosts:
+    move.w  player_killed_timer(pc),d6
+    bmi.b   .normal
+    cmp.w   #PLAYER_KILL_TIMER-NB_TICKS_PER_SEC,d6
+    bcc.b   .normal
+    ; clear the ghosts sprites after 1 second when pacman is killed
+    bsr.b hide_sprites
+    rts
+.normal    
     lea ghosts(pc),a0
     moveq.l #3,d7
 .gloop    
@@ -830,35 +857,48 @@ draw_ghosts:
     lsr.w   #2,d2   ; 8 divide to get 0,1, divide by 4 then mask after adding direction
     cmp.w   #MODE_FRIGHT,d3
     bne.b   .no_fright
+    move.w  #1,$100
     ; change palette for that sprite
     move.w  mode_timer(a0),d4
-    move.l  color_register(a0),a3
-    lea     frightened_ghosts_blue_palette(pc),a2
-    move.l     frightened_ghost_blue_frame_table(a0),a1
+
     cmp.w   flash_timer(a0),d4
-    bcs.b   .no_flashing
+    bcc.b   .no_flashing        ; flashing if mode_timer is below flash_timer
     ; now check the flash toggle
     move.w  flash_toggle_timer(a0),d4
     addq.w  #1,d4
     cmp.w   #NB_FLASH_FRAMES,d4
     bne.b   .no_toggle
     clr.w   d4
-    eor.w   #1,flashing_as_white(a0)
-    tst.w   flashing_as_white(a0)
-    beq.b   .no_toggle
-    ; white flashing
-    lea     frightened_ghosts_white_palette(pc),a2
-    move.l  frightened_ghost_white_frame_table(a0),a1    
+    eor.b   #1,flashing_as_white(a0)
+    st.b   must_set_fright_sprite(a0)   ; optim, don't rewrite palette over and over
 .no_toggle
     move.w  d4,flash_toggle_timer(a0)
 .no_flashing
+    tst.b   must_set_fright_sprite(a0)
+    beq.b   .fright
+    clr.b   must_set_fright_sprite(a0)
+    move.l  color_register(a0),a3
+    lea     frightened_ghosts_blue_palette(pc),a2
+    ; select proper palette (blue/white)
+    tst.b   flashing_as_white(a0)
+    beq.b   .no_white
+    ; white flashing
+    lea     frightened_ghosts_white_palette(pc),a2
+.no_white
     ; directly change color registers for that sprite
     move.l  (a2)+,(a3)+
     move.l  (a2)+,(a3)+
     bra.b   .fright
 .no_fright
     add.w   direction(a0),d2     ; add 0,4,8,12 depending on direction
+    bra.b   .no_white2
 .fright
+    ; select proper fright sprite
+    move.l  frightened_ghost_blue_frame_table(a0),a1
+    tst.b   flashing_as_white(a0)
+    beq.b   .no_white2
+    move.l  frightened_ghost_white_frame_table(a0),a1    
+.no_white2
     bclr    #0,d2   ; even
     add.w   d2,d2       ; times 2
     move.l  (a1,d2.w),a1
@@ -920,6 +960,14 @@ draw_all
 
     ; draw pacman
     lea player(pc),a2
+    tst.w  player_killed_timer
+    bmi.b   .normal
+    lea     pac_dead,a0
+    move.w  death_frame_offset,d0
+    add.w   d0,a0       ; proper frame to blit
+    bra.b   .pacblit
+
+.normal    
     move.w  direction(a2),d0
     lea  pac_dir_table(pc),a0
     move.l  (a0,d0.w),a0
@@ -927,7 +975,7 @@ draw_all
     add.w   d0,d0
     add.w   d0,d0
     move.l  (a0,d0.w),a0
-
+.pacblit
     lea	screen_data+SCREEN_PLANE_SIZE,a1
     move.w  xpos(a2),d0
     move.w  ypos(a2),d1
@@ -1446,6 +1494,7 @@ update_all
 .ready_off
     bsr update_pac
     bsr update_ghosts
+    bsr check_pac_ghosts_collisions
     rts
 remove_bonus
     move.b  #0,dot_table+BONUS_OFFSET
@@ -1453,9 +1502,60 @@ remove_bonus
     clr.w   bonus_timer
     rts
 
+; is done after both pacman & ghosts have been updated, maybe allowing for the
+; "pass-through" bug at higher levels
+check_pac_ghosts_collisions
+    lea player(pc),a3
+    move.w  xpos(a3),d0
+    move.w  ypos(a3),d1
+    lsr.w   #3,d0
+    lsr.w   #3,d1
+    
+    lea ghosts(pc),a4
+    moveq.w #3,d7
+.gloop
+    move.w  xpos(a4),d2
+    move.w  ypos(a4),d3
+    lsr.w   #3,d2
+    lsr.w   #3,d3
+    cmp.w   d2,d0
+    bne.b   .nomatch
+    cmp.w   d3,d1
+    beq.b   .collision
+.nomatch
+    add.w   #Ghost_SIZEOF,a4
+    dbf d7,.gloop
+    rts
+.collision
+    ; is the ghost frightened?
+    move.w  mode(a4),d0
+    cmp.w   #MODE_FRIGHT,d0
+    beq.b   .pac_eats_ghost
+    ; pacman is killed
+    move.w  #PLAYER_KILL_TIMER,player_killed_timer
+.pac_eats_ghost:
+    ; exits as soon as a collision is found
+    rts
+
 update_ghosts
     lea ghosts(pc),a4
     moveq.w #3,d7
+    move.w  player_killed_timer(pc),d6
+    bmi.b   .gloop
+    subq.w  #1,player_killed_timer
+    bne.b   .glkill
+    ; TODO: end current life & restart
+    blitz
+.glkill
+    ; player killed, just update ghost animations but don't move
+    move.w  frame(a4),d1
+    addq.w  #1,d1
+    and.w   #$F,d1
+    move.w  d1,frame(a4)
+    add.w   #Ghost_SIZEOF,a4
+    dbf d7,.glkill
+    rts
+    
 .gloop
     move.w  d7,-(a7)
     ; decrease mode timer
@@ -1511,13 +1611,18 @@ update_ghosts
     cmp.b   #P,d0
     bne.b   .no_pen
 .in_pen
-    ; just moves up and down
+    ; see if number of dots is 0 in which case exit
+    bsr .can_exit_pen
+    tst d0
+    bne.b   .align_sequence
+    
+    ; just moves up and down if not in exit sequence
     move.w  direction(a4),d6
     cmp.w   #UP,d6
     beq.b   .pen_up
     cmp.w   #DOWN,d6
     beq.b   .pen_down
-    bra.b   .next_ghost     ; TEMP lateral in pen
+    bra.b   .next_ghost
 .pen_down    
     cmp.w   #OTHERS_YSTART_POS+5,d3
     bne.b   .move_pen_down
@@ -1531,21 +1636,43 @@ update_ghosts
 .pen_up
     cmp.w   #OTHERS_YSTART_POS-6,d3
     bne.b   .move_pen_up
-    ; see if number of dots is 0 in which case exit
-    bsr .can_exit_pen
-    tst d0
-    beq.b   .still_inside
-    
-    sub.w   #1,ypos(a4)
-    bra.b   .next_ghost
-    ; toggle direction
-.still_inside
     move.w  #DOWN,direction(a4)
-    add.w   #1,ypos(a4)
     bra.b   .next_ghost
 .move_pen_up:
     sub.w   #1,ypos(a4)
     bra.b   .next_ghost
+    
+.align_sequence
+    cmp.w   #RED_XSTART_POS,xpos(a4)
+    beq.b   .pen_x_aligned
+
+    ; is it y-aligned
+    cmp.w   #OTHERS_YSTART_POS,ypos(a4)
+    beq.b   .pen_y_aligned
+    bcc.b   .pen_align_from_down
+    move.w  #DOWN,direction(a4)
+    addq.w  #1,ypos(a4)
+    bra.b   .next_ghost
+.pen_align_from_down
+    subq.w  #1,ypos(a4)
+    bra.b   .next_ghost
+.pen_y_aligned
+    cmp.w   #RED_XSTART_POS,xpos(a4)
+    bcc.b   .pen_left
+    ; center from right
+    move.w  #RIGHT,direction(a4)
+    add.w   #1,xpos(a4)
+    bra.b   .next_ghost
+.pen_left
+    ; center from left
+    sub.w   #1,xpos(a4)
+    move.w  #LEFT,direction(a4)
+    bra.b   .next_ghost
+.pen_x_aligned
+    move.w  #UP,direction(a4)
+    sub.w   #1,ypos(a4)
+    bra.b   .next_ghost
+
 .no_pen
     move.w  d2,d0
     move.w  d3,d1
@@ -1926,8 +2053,6 @@ update_ghosts
     rts
     
 .new_mode
-    ;;blitz
-    
     move.w  mode(a4),d0 ; old mode
     cmp.w   #MODE_FRIGHT,d0
     beq.b   .from_fright
@@ -2032,7 +2157,8 @@ power_pill_taken
     move.w  (a1)+,d2
     move.w  d2,mode_timer(a0)
     move.w  (a1)+,flash_timer(a0)
-    clr.w   flashing_as_white(a0)
+    clr.b   flashing_as_white(a0)
+    st.b   must_set_fright_sprite(a0)
     move.b  #1,reverse_flag(a0)
     bra.b   .next
 .no_time
@@ -2049,6 +2175,20 @@ power_pill_taken
     rts
     
 update_pac
+    move.w  player_killed_timer(pc),d6
+    bmi.b   .alive
+    moveq.w #0,d0
+    move.w  #PLAYER_KILL_TIMER-NB_TICKS_PER_SEC,d5
+    sub.w   d6,d5
+    bcs.b   .frame_done     ; frame 0
+    ; d5 is the timer starting from 0
+    lea player_kill_anim_table(pc),a0
+    move.b  (a0,d5.w),d0
+.frame_done
+    lsl.w   #8,d0   ; times 64
+    move.w  d0,death_frame_offset
+    rts
+.alive
     tst.w   fright_timer
     beq.b   .no_fright1
     sub.w   #1,fright_timer
@@ -2200,7 +2340,18 @@ update_pac
     cmp.w   #3,d2
     bcc.b   .bonus_eaten
     ; dot
-    move.l  ghost_which_counts_dors(pc),a3
+    move.l  ghost_which_counts_dots(pc),a3
+.retry
+    cmp.l   #ghosts+4*Ghost_SIZEOF,a3
+    beq.b   .no_need_to_count_dots
+    tst.w   pen_nb_dots(a3)
+    bne.b   .do_ghost_count
+    add.l   #Ghost_SIZEOF,a3
+    move.l  a3,ghost_which_counts_dots
+    bra.b   .retry
+.do_ghost_count
+    sub.w   #1,pen_nb_dots(a3)
+.no_need_to_count_dots
     move.b  nb_dots_eaten,d4
     addq.b  #1,d4
     tst.w   bonus_timer
@@ -2811,12 +2962,16 @@ next_ghost_score
     dc.l    0
 previous_pacman_address
     dc.l    0
-ghost_which_counts_dors
+ghost_which_counts_dots
     dc.l    0
 ; 0: level 1
 level_number
     dc.w    0
+player_killed_timer:
+    dc.w    -1
 fright_timer
+    dc.w    0
+death_frame_offset
     dc.w    0
 maze_blink_nb_times
     dc.b    0
@@ -2835,6 +2990,42 @@ fruit_score     ; must follow score_table
 nb_dots_eaten
     dc.b    0
 
+player_kill_anim_table:
+    REPT    NB_TICKS_PER_SEC/2
+    dc.b    1
+    ENDR
+    REPT    NB_TICKS_PER_SEC/8
+    dc.b    2
+    ENDR
+    REPT    NB_TICKS_PER_SEC/8
+    dc.b    3
+    ENDR
+    REPT    NB_TICKS_PER_SEC/8
+    dc.b    4
+    ENDR
+    REPT    NB_TICKS_PER_SEC/8
+    dc.b    5
+    ENDR
+    REPT    NB_TICKS_PER_SEC/8
+    dc.b    6
+    ENDR
+    REPT    NB_TICKS_PER_SEC/8
+    dc.b    7
+    ENDR
+    REPT    NB_TICKS_PER_SEC/8
+    dc.b    8
+    ENDR
+    REPT    NB_TICKS_PER_SEC/8
+    dc.b    9
+    ENDR
+    REPT    NB_TICKS_PER_SEC/8
+    dc.b    10
+    ENDR
+    REPT    NB_TICKS_PER_SEC/4
+    dc.b    11
+    ENDR
+    even
+    
     even
 
     
@@ -2957,7 +3148,7 @@ no_direction_choice_table:
     ; 4 words: total number of frames for fright mode,
     ;          number of frames to start flashing
 DEF_FRIGHT_ENTRY:MACRO
-    dc.w    NB_TICKS_PER_SEC*\1,NB_TICKS_PER_SEC*\1-NB_FLASH_FRAMES*\2
+    dc.w    NB_TICKS_PER_SEC*\1,NB_FLASH_FRAMES*\2*2
     ENDM
     
 fright_table
@@ -3320,7 +3511,20 @@ pac_down_0
 pac_down_1
     incbin  "pac_down_1.bin"
 pac_dead
+    ; each has 64 bytes
     incbin  "pac_dead_0.bin"
+    incbin  "pac_dead_1.bin"
+    incbin  "pac_dead_2.bin"
+    incbin  "pac_dead_3.bin"
+    incbin  "pac_dead_4.bin"
+    incbin  "pac_dead_5.bin"
+    incbin  "pac_dead_6.bin"
+    incbin  "pac_dead_7.bin"
+    incbin  "pac_dead_8.bin"
+    incbin  "pac_dead_9.bin"
+    incbin  "pac_dead_10.bin"
+    incbin  "pac_dead_11.bin"
+    ds.b    64,0        ; empty frame
 pac_lives
     incbin  "pac_lives_0.bin"
 bonus_pics:
