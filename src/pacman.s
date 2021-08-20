@@ -657,6 +657,7 @@ init_player
     move.w  #50,ready_timer
     clr.l   previous_random
     move.w  #STATE_PLAYING,current_state
+    move.l  screen_data+2*NB_BYTES_PER_LINE+SCREEN_PLANE_SIZE,previous_pacman_address  ; valid address for first clear
 	rts	    
 
 DEBUG_X = 8     ; 232+8
@@ -951,18 +952,30 @@ draw_all
     swap    d2
     clr.w   d2
 .pdraw
+    ; first roughly clear some pacman zones that can remain. We don't test the directions
+    ; just clear every possible pixel that could remain whatever the direction was/is
+    move.l  previous_pacman_address(pc),a3
+    clr.l   (a3)
+    clr.l   (NB_BYTES_PER_LINE,a3)
+    clr.l   (NB_BYTES_PER_LINE*2,a3)
+    clr.l   (NB_BYTES_PER_LINE*3,a3)
+    clr.l   (NB_BYTES_PER_LINE*5,a3)
+    clr.l   (NB_BYTES_PER_LINE*6,a3)
+    clr.l   (NB_BYTES_PER_LINE*7,a3)
+    clr.l   (NB_BYTES_PER_LINE*8,a3)
+    clr.l   (NB_BYTES_PER_LINE*9,a3)
+    clr.l   (NB_BYTES_PER_LINE*15,a3)
+    clr.l   (NB_BYTES_PER_LINE*16,a3)
+
     bsr blit_plane
     ; A1 is start of dest, use it to clear upper part and lower part
     ; and possibly shifted to the left/right
-    move.l  a1,d0
-    btst    #0,d0
-    beq.b   .ok
-    subq.l  #1,a1   ; even address, always!
-.ok
-    clr.l   (-NB_BYTES_PER_LINE,a1)
-    clr.l   (-NB_BYTES_PER_LINE*2,a1)
-    clr.l   (-NB_BYTES_PER_LINE*3,a1)
-    clr.l   (NB_BYTES_PER_LINE*16,a1)
+;;    move.l  a1,d0
+;;    btst    #0,d0
+;;    beq.b   .ok
+;;    subq.l  #1,a1   ; even address, always!
+;;.ok
+    move.l  a1,previous_pacman_address
 
 
     ; test display score with the proper color (reusing pink sprite palette)
@@ -1480,7 +1493,7 @@ update_ghosts
     ; check if was in the pen by checking direction
     cmp.w   #UP,direction(a4)
     bne.b   .no_pen     ; was just passing by
-    ; now just exited the pen: go left
+    ; now just exited the pen: go left (unless some reverse flag is set)
     move.w  #LEFT,direction(a4)
     move.w  #-1,h_speed(a4)
     move.w  #0,v_speed(a4)
@@ -1577,7 +1590,7 @@ update_ghosts
 .can_exit_pen
     tst.w   pen_nb_dots(a4)
     beq.b   .exit_pen_ok
-    
+.no_exit_pen    
     clr.l   d0
     rts
 .exit_pen_ok
@@ -1709,7 +1722,8 @@ update_ghosts
     ENDR
    
 .is_in_pen
-        dc.b    0
+    dc.b    0
+
         even
     
 .set_speed_vector
@@ -2179,13 +2193,14 @@ update_pac
     ; should not happen!!
     bra.b   .score
 .simple
-    move.b  #1,still_timer(a4)      ; still during 3 frames
+    move.b  #1,still_timer(a4)      ; still during 1 frame
     bsr clear_dot
 .score
     and.w   #$FF,d2
     cmp.w   #3,d2
     bcc.b   .bonus_eaten
     ; dot
+    move.l  ghost_which_counts_dors(pc),a3
     move.b  nb_dots_eaten,d4
     addq.b  #1,d4
     tst.w   bonus_timer
@@ -2794,6 +2809,10 @@ bonus_timer
     dc.w    0
 next_ghost_score
     dc.l    0
+previous_pacman_address
+    dc.l    0
+ghost_which_counts_dors
+    dc.l    0
 ; 0: level 1
 level_number
     dc.w    0
@@ -3354,39 +3373,51 @@ DECL_GHOST:MACRO
 \1_ghost_0
     dc.l    0
     incbin  "ghost_0.bin"
+    dc.l    0,0
 \1_ghost_1
     dc.l    0
     incbin  "ghost_1.bin"
+    dc.l    0,0
 \1_ghost_2
     dc.l    0
     incbin  "ghost_2.bin"
+    dc.l    0,0
 \1_ghost_3
     dc.l    0
     incbin  "ghost_3.bin"
+    dc.l    0,0
 \1_ghost_4
     dc.l    0
     incbin  "ghost_4.bin"
+    dc.l    0,0
 \1_ghost_5
     dc.l    0
     incbin  "ghost_5.bin"
+    dc.l    0,0
 \1_ghost_6
     dc.l    0
     incbin  "ghost_6.bin"
+    dc.l    0,0
 \1_ghost_7
     dc.l    0
     incbin  "ghost_7.bin"
+    dc.l    0,0
 \1_frightened_ghost_blue_0
     dc.l    0
     incbin  "frightened_ghost_blue_0.bin"
+    dc.l    0,0
 \1_frightened_ghost_blue_1
     dc.l    0
     incbin  "frightened_ghost_blue_1.bin"
+    dc.l    0,0
 \1_frightened_ghost_white_0
     dc.l    0
     incbin  "frightened_ghost_white_0.bin"
+    dc.l    0,0
 \1_frightened_ghost_white_1
     dc.l    0
     incbin  "frightened_ghost_white_1.bin"
+    dc.l    0,0
 
     ENDM
         
