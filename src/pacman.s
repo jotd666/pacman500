@@ -121,6 +121,10 @@ MAZE_PLANE_SIZE = NB_BYTES_PER_LINE*NB_LINES
 SCREEN_PLANE_SIZE = 40*NB_LINES
 NB_PLANES   = 4
 
+TUNNEL_MASK_X = NB_BYTES_PER_MAZE_LINE*8
+TUNNEL_MASK_Y = OTHERS_YSTART_POS-27
+
+
 NB_TILES_PER_LINE = 2+28+2    ; 2 fake tiles in the start & end
 NB_TILE_LINES = 31+3    ; 3 fake tiles before the maze to simulate ghosts targets
 NB_LINES = NB_TILE_LINES*8
@@ -170,13 +174,29 @@ DIRF_DOWN = 1<<DIRB_DOWN
 DIRF_LEFT = 1<<DIRB_LEFT
 DIRF_UP = 1<<DIRB_UP
 
-; states, 2 by 2, starting by 0
+; states, 4 by 4, starting by 0
 
 STATE_PLAYING = 0
-STATE_GAME_OVER = 1*2
-STATE_LEVEL_COMPLETED = 2*2
-STATE_NEXT_LEVEL = 3*2
+STATE_GAME_OVER = 1*4
+STATE_LEVEL_COMPLETED = 2*4
+STATE_NEXT_LEVEL = 3*4
+STATE_LIFE_LOST = 4*4
 
+; jump table macro, used in draw and update
+DEF_STATE_CASE_TABLE:MACRO
+    move.w  current_state(pc),d0
+    lea     .case_table(pc),a0
+    move.l     (a0,d0.w),a0
+    jmp (a0)
+    
+.case_table
+    dc.l    .playing
+    dc.l    .game_over
+    dc.l    .level_completed
+    dc.l    .next_level
+    dc.l    .life_lost
+    ENDM
+    
 ; write current PC value to some address
 LOGPC:MACRO
      bsr    .next_\1
@@ -200,6 +220,7 @@ ADD_XY_TO_A1:MACRO
     add.w   d0,a1       ; plane address
     add.w   d1,a1       ; plane address
     ENDM
+
 
     
 Start:
@@ -234,11 +255,16 @@ Start:
 .new_level  
     lea _custom,a5
     move.w  #$7FFF,(intena,a5)
-    bsr init_player
 
     ; do it first, as the last bonus overwrites bottom left of screen
-    bsr draw_lives_and_bonuses    
+    bsr draw_bonuses    
     bsr draw_maze
+    ; compute tunnel position sprite
+    move.w  #TUNNEL_MASK_X,d0
+    move.w  #TUNNEL_MASK_Y,d1
+    bsr store_sprite_pos
+    move.l  d0,tunnel_sprite_control_word
+   
     ; for debug
     ;;bsr draw_bounds
 
@@ -263,7 +289,6 @@ Start:
     
     bsr draw_dots
 
-    bsr init_ghosts
     
     moveq #NB_PLANES,d4
     lea	bitplanes,a0              ; adresse de la Copper-List dans a0
@@ -320,20 +345,31 @@ Start:
     ; enable copper interrupts, mainly
 
     move.w #$C038,intena(a5)
-    
+
+.new_life
+    bsr wait_bof
+    bsr init_ghosts
+    bsr init_player
+    bsr draw_lives
 .mainloop
     btst    #6,$bfe001
     beq.b   .out
-;    tst.w   current_state
-;    beq.b   .mainloop
-    cmp.w   #STATE_NEXT_LEVEL,current_state
-    bne.b   .no_new_level
+    DEF_STATE_CASE_TABLE
+    
+.playing
+.level_completed
+    bra.b   .mainloop
+.game_over
+    bra.b   .mainloop
+.next_level
     add.w   #1,level_number
     bra.b   .new_level
-.no_new_level
-    bra.b   .mainloop
-.out
-      
+.life_lost
+    sub.b   #1,nb_lives
+    bne.b   .new_life
+    move.w  #STATE_GAME_OVER,current_state
+    bra.b   .game_over
+.out      
     ; quit
     bsr     restore_interrupts
 			      
@@ -350,6 +386,19 @@ Start:
     jsr _LVOPermit(a6)                  ; Task Switching autorisé
     moveq.l #0,d0
     rts
+
+wait_bof
+	move.l	d0,-(a7)
+.wait	move.l	$dff004,d0
+	and.l	#$1ff00,d0
+	cmp.l	#260<<8,d0
+	bne.b	.wait
+.wait2	move.l	$dff004,d0
+	and.l	#$1ff00,d0
+	cmp.l	#260<<8,d0
+	beq.b	.wait2
+	move.l	(a7)+,d0
+	rts    
     
 clear_screen
     lea screen_data,a1
@@ -381,9 +430,10 @@ init_new_play:
     
 hide_sprites:
     move.w  #7,d1
-.emptyspr
     lea  sprites,a0
     lea empty_sprite,a1
+.emptyspr
+
     move.l  a1,d0
     move.w  d0,(6,a0)
     swap    d0
@@ -406,7 +456,7 @@ hide_sprites:
 
 init_ghosts
     lea ghosts(pc),a0
-    lea sprites,a1   ; the sprite part of the copperlist
+    lea ghost_sprites,a1   ; the sprite part of the copperlist, sprite 1-7 are the ghost sprites
     lea .behaviour_table(pc),a2
     lea game_palette+32(pc),a3  ; the sprite part of the color palette 16-31
     ; shared settings
@@ -423,7 +473,7 @@ init_ghosts
     move.l  a4,color_register(a0)
     addq.l  #8,a4   ; next color register range
     move.l  a1,copperlist_address(a0)
-    add.l   #16,a1
+    add.l   #16,a1      ; FUCK
     
     clr.w   mode_counter(a0)
     clr.w   speed_table_index(a0)
@@ -661,6 +711,8 @@ update_ghost_mode_timer
     rts
     
 init_player
+    clr.w   bonus_clear_message
+
     lea player(pc),a0
     move.l  #'PACM',character_id(a0)
 	move.w  #RED_XSTART_POS,xpos(a0)
@@ -836,12 +888,21 @@ draw_debug
 draw_ghosts:
     move.w  player_killed_timer(pc),d6
     bmi.b   .normal
+    LOGPC   100
     cmp.w   #PLAYER_KILL_TIMER-NB_TICKS_PER_SEC,d6
     bcc.b   .normal
     ; clear the ghosts sprites after 1 second when pacman is killed
     bsr.b hide_sprites
     rts
-.normal    
+.normal
+    ; enable tunnel mask
+    move.l  tunnel_sprite_control_word(pc),black_sprite
+    lea     sprites,a0
+    move.l  #black_sprite,d0
+    move.w  d0,(6,a0)
+    swap    d0
+    move.w  d0,(2,a0)
+     
     lea ghosts(pc),a0
     moveq.l #3,d7
 .gloop    
@@ -913,16 +974,11 @@ draw_ghosts:
     dbf d7,.gloop
     rts
     
-draw_all    
-    move.w  current_state(pc),d0
-    lea     .case_table(pc),a0
-    move.l     (a0,d0.w),a0
-    jmp (a0)
-.case_table
-    dc.l    .playing
-    dc.l    .game_over
-    dc.l    .level_completed
-    dc.l    .next_level
+draw_all
+    DEF_STATE_CASE_TABLE
+    
+.level_completed
+.life_lost
 .next_level
     ; don't do anything
     rts
@@ -938,7 +994,6 @@ draw_all
     move.w  #136,d1
     bsr write_string
     bra.b   .draw_complete
-.level_completed
 .playing
     tst.w   ready_timer
     beq.b   .ready_off
@@ -958,12 +1013,12 @@ draw_all
 .ready_off
     bsr   draw_ghosts
 
-    ; draw pacman
+    ; draw_pacman
     lea player(pc),a2
     tst.w  player_killed_timer
     bmi.b   .normal
     lea     pac_dead,a0
-    move.w  death_frame_offset,d0
+    move.w  death_frame_offset(pc),d0
     add.w   d0,a0       ; proper frame to blit
     bra.b   .pacblit
 
@@ -1025,21 +1080,6 @@ draw_all
 ;;.ok
     move.l  a1,previous_pacman_address
 
-
-    ; test display score with the proper color (reusing pink sprite palette)
-    IFEQ    1
-    move.l  score_frame_table+12,a0
-    move.w  #20,d0
-    move.w  #24,d1
-    bsr store_sprite_pos      
-    move.l  d0,(a0)
-    lea sprites+24,a1
-    move.l  a0,d2
-    move.w  d2,(6,a1)
-    swap    d2
-    move.w  d2,(2,a1)    
-    ; set proper positions for ghosrs
-    ENDC
     
     
     ; timer not running, animate
@@ -1159,7 +1199,7 @@ clear_plane_any
     movem.l (a7)+,d0-D2/a0-a2
     rts
     
-draw_lives_and_bonuses:
+draw_lives:
     lea	screen_data+SCREEN_PLANE_SIZE,a1
     move.l #NB_BYTES_PER_MAZE_LINE*8,d0
     moveq.l #0,d1
@@ -1170,7 +1210,6 @@ draw_lives_and_bonuses:
     move.b  nb_lives(pc),d7
     ext     d7
     subq.w  #2,d7
-    beq.b   .out
     bmi.b   .out
     move.w #NB_BYTES_PER_MAZE_LINE*8,d3
     moveq.l #-1,d2  ; mask
@@ -1183,6 +1222,7 @@ draw_lives_and_bonuses:
     dbf d7,.lloop
 .out
 
+draw_bonuses:
     move.w #NB_BYTES_PER_MAZE_LINE*8,d0
     move.w #248-32,d1
     move.w  level_number,d2
@@ -1455,14 +1495,11 @@ mouse:
 ; trashes: potentially all registers
 
 update_all
-    move.w  current_state(pc),d0
-    lea     .case_table(pc),a0
-    move.l     (a0,d0.w),a0
-    jmp (a0)
-.case_table
-    dc.l    .playing
-    dc.l    .game_over
-    dc.l    .level_completed
+    DEF_STATE_CASE_TABLE
+
+.life_lost
+    bra update_power_dot_flashing
+
 .level_completed
     subq.w  #1,maze_blink_timer
     bne.b   .no_change
@@ -1492,6 +1529,7 @@ update_all
     subq.w  #1,ready_timer
     rts
 .ready_off
+    bsr update_power_dot_flashing
     bsr update_pac
     bsr update_ghosts
     bsr check_pac_ghosts_collisions
@@ -1501,10 +1539,21 @@ remove_bonus
     move.w  #1,bonus_clear_message      ; tell draw routine to clear
     clr.w   bonus_timer
     rts
-
+update_power_dot_flashing
+    ; power dot blink timer
+    subq.w  #1,power_dot_timer
+    bpl.b   .no_reload
+    move.w  #BLINK_RATE,power_dot_timer
+.no_reload
+    rts
+    
 ; is done after both pacman & ghosts have been updated, maybe allowing for the
 ; "pass-through" bug at higher levels
 check_pac_ghosts_collisions
+    tst.w   player_killed_timer
+    bmi.b   .check
+    rts
+.check
     lea player(pc),a3
     move.w  xpos(a3),d0
     move.w  ypos(a3),d1
@@ -1534,6 +1583,20 @@ check_pac_ghosts_collisions
     ; pacman is killed
     move.w  #PLAYER_KILL_TIMER,player_killed_timer
 .pac_eats_ghost:
+    ; test display score with the proper color (reusing pink sprite palette)
+    IFEQ    1
+    move.l  score_frame_table+12,a0
+    move.w  #20,d0
+    move.w  #24,d1
+    bsr store_sprite_pos      
+    move.l  d0,(a0)
+    lea sprites+32,a1
+    move.l  a0,d2
+    move.w  d2,(6,a1)
+    swap    d2
+    move.w  d2,(2,a1)    
+    ; set proper positions for ghosrs
+    ENDC
     ; exits as soon as a collision is found
     rts
 
@@ -1544,8 +1607,9 @@ update_ghosts
     bmi.b   .gloop
     subq.w  #1,player_killed_timer
     bne.b   .glkill
-    ; TODO: end current life & restart
-    blitz
+    ; end current life & restart
+    move.w  #STATE_LIFE_LOST,current_state
+    rts
 .glkill
     ; player killed, just update ghost animations but don't move
     move.w  frame(a4),d1
@@ -2185,7 +2249,7 @@ update_pac
     lea player_kill_anim_table(pc),a0
     move.b  (a0,d5.w),d0
 .frame_done
-    lsl.w   #8,d0   ; times 64
+    lsl.w   #6,d0   ; times 64
     move.w  d0,death_frame_offset
     rts
 .alive
@@ -2200,11 +2264,7 @@ update_pac
     ; timeout: make fruit disappear, no score
     bsr remove_bonus
 .no_fruit 
-    ; power dot blink timer
-    subq.w  #1,power_dot_timer
-    bpl.b   .no_reload
-    move.w  #BLINK_RATE,power_dot_timer
-.no_reload
+
     ; player
     lea player(pc),a4
     tst.b   still_timer(a4)
@@ -2964,6 +3024,8 @@ previous_pacman_address
     dc.l    0
 ghost_which_counts_dots
     dc.l    0
+tunnel_sprite_control_word
+    dc.l    0
 ; 0: level 1
 level_number
     dc.w    0
@@ -3023,6 +3085,9 @@ player_kill_anim_table:
     ENDR
     REPT    NB_TICKS_PER_SEC/4
     dc.b    11
+    ENDR
+    REPT    NB_TICKS_PER_SEC
+    dc.b    12
     ENDR
     even
     
@@ -3423,7 +3488,7 @@ dot_table
     ds.b    NB_TILES_PER_LINE*NB_TILE_LINES
     
     SECTION  S3,DATA,CHIP
-
+; main copper list
 coplist
 bitplanes:
    dc.l  $01080000
@@ -3439,12 +3504,15 @@ bitplanes:
 ;   dc.l  $00f00000
 ;   dc.l  $00f20000
 
+tunnel_color_reg = color+38
+
 colors:
    dc.w color,0     ; fix black (so debug can flash color0)
 sprites:
     ; red ghost
     dc.w    sprpt,0
     dc.w    sprpt+2,0
+ghost_sprites:
     ; empty
     dc.w    sprpt+4,0
     dc.w    sprpt+6,0
@@ -3467,7 +3535,24 @@ sprites:
     dc.w    sprpt+28,0
     dc.w    sprpt+30,0
 
- 
+    IFEQ 1
+    dc.w    (TUNNEL_MASK_Y+44)<<8+1,$FFFE
+tunnel_copperlist:
+    REPT    16
+; color change for tunnel mask
+    ; reset
+    dc.w    color+38,$0F00
+    dc.w    1,(TUNNEL_MASK_X+24)<<1
+    ; set tunnel mask color (black)
+    dc.w    color+38,0
+    ; nexr line
+    dc.w    (TUNNEL_MASK_Y+45+REPTN)<<8+1,$FFFE
+    ENDR
+    dc.w    color+38,$0F0
+    ENDC
+;tunnel_sprite_color:
+;   dc.w tunnel_color_reg,0  ; set proper red ghost palette (trashed by tunnel) at start
+
 end_color_copper:
    dc.w  diwstrt,$3081            ;  DIWSTRT
    dc.w  diwstop,$28c1            ;  DIWSTOP
@@ -3538,7 +3623,11 @@ bonus_pics:
     incbin  "key.bin" 
 
 
-
+black_sprite:
+    dc.l    0   ; control word
+    REPT    16
+    dc.l    $FFFFFFFF
+    ENDR
     
 ghost_eyes_0
     dc.l    0
