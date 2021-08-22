@@ -62,6 +62,7 @@ def process_tiles():
     for object in tiles["objects"]:
         if object.get("ignore"):
             continue
+        blit_pad = object.get("blit_pad",True)
         name = object["name"]
         start_x = object["start_x"]+x_offset
         start_y = object["start_y"]+y_offset
@@ -104,8 +105,9 @@ def process_tiles():
                     raise Exception("{} (frame #{}) with should be a multiple of 16, found {}".format(name,i,x_size))
                 # pacman is special: 1 plane
                 p = bitplanelib.palette_extract(cropped_img,palette_precision_mask=0xF0)
-                # add 16 pixels
-                img = Image.new("RGB",(x_size+16,cropped_img.size[1]))
+                # add 16 pixelsblit_pad
+                img_x = x_size+16 if blit_pad else x_size
+                img = Image.new("RGB",(img_x,cropped_img.size[1]))
                 img.paste(cropped_img)
                 # if 1 plane, pacman frames, save only 1 plane, else save all 4 planes
                 used_palette = p if len(p)==2 else game_palette

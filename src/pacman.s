@@ -67,6 +67,7 @@ CIAAPRA = $BFE001
     APTR     frame_table
     APTR     frightened_ghost_white_frame_table
     APTR     frightened_ghost_blue_frame_table
+    APTR     eye_frame_table
     APTR     copperlist_address
     APTR     color_register
     UWORD    home_corner_xtile
@@ -84,8 +85,7 @@ CIAAPRA = $BFE001
     UWORD    pen_nb_dots
     UBYTE    reverse_flag   ; direction change flag
     UBYTE    flashing_as_white
-    UBYTE    must_set_fright_sprite
-    UBYTE   pad2
+
 	LABEL	Ghost_SIZEOF
     
     ;Exec Library Base Offsets
@@ -114,6 +114,7 @@ T = 2   ; tunnel
 B = 1   ; ghost up block
 O = 0   ; empty
 
+TOTAL_NUMBER_OF_DOTS = 244
 
 NB_BYTES_PER_LINE = 40
 NB_BYTES_PER_MAZE_LINE = 28
@@ -135,7 +136,7 @@ NB_FLASH_FRAMES = 14
 
 ; matches the pac kill animation
 PLAYER_KILL_TIMER = NB_TICKS_PER_SEC+NB_TICKS_PER_SEC/2+(NB_TICKS_PER_SEC/8)*9+NB_TICKS_PER_SEC/4+NB_TICKS_PER_SEC
-
+GHOST_KILL_TIMER = (NB_TICKS_PER_SEC*5)/6
 
     
 X_START = 16
@@ -253,6 +254,7 @@ Start:
     bsr init_new_play
 
 .new_level  
+    bsr init_level
     lea _custom,a5
     move.w  #$7FFF,(intena,a5)
 
@@ -344,13 +346,13 @@ Start:
     move.w #$83E0,dmacon(a5)
     ; enable copper interrupts, mainly
 
-    move.w #$C038,intena(a5)
 
 .new_life
     bsr wait_bof
     bsr init_ghosts
     bsr init_player
     bsr draw_lives
+    move.w #$C038,intena(a5)
 .mainloop
     btst    #6,$bfe001
     beq.b   .out
@@ -419,15 +421,36 @@ init_new_play:
     move.w  #0,level_number
     move.l  #0,score
     move.l  #0,displayed_score
-    
+    rts
+init_level: 
     ; level
     move.w  level_number,d2
+    cmp.w   #21,d2
+    bcs.b   .okay
+    ; maxed out
+    move.w  #20,d2
+.okay
+    ; elroy threshold
+    lea elroy_table(pc),a1
+    move.b  (a1,d2.w),d0
+    move.b  d0,elroy_threshold_1
+    lsr.w   #1,d0   ; half
+    move.b  d0,elroy_threshold_2
+    
     add.w   d2,d2
+
     lea bonus_level_score(pc),a0
     move.w  (a0,d2.w),fruit_score
     move.b  #0,nb_dots_eaten
-    rts
     
+    ; speed table
+    add.w   d2,d2
+    lea speed_table(pc),a1
+    move.l  (a1,d2.w),a1    ; global speed table
+    move.l  a1,global_speed_table
+    
+    rts
+ 
 hide_sprites:
     move.w  #7,d1
     lea  sprites,a0
@@ -441,7 +464,31 @@ hide_sprites:
     addq.l  #8,a0
     dbf d1,.emptyspr
     rts
+    
+hide_ghost_sprites:
+    move.w  #3,d1
+    lea  sprites+8,a0
+    lea empty_sprite,a1
+.emptyspr
 
+    move.l  a1,d0
+    move.w  d0,(6,a0)
+    swap    d0
+    move.w  d0,(2,a0)
+    add.w  #16,a0
+    dbf d1,.emptyspr
+    rts
+
+; < A0: ghost structure
+set_normal_ghost_palette
+    move.l  a1,-(a7)
+    move.l  color_register(a0),a1
+    ; set/reset palette
+    move.l  palette(a0),(a1)+
+    move.l  palette+4(a0),(a1)
+    move.l  (a7)+,a1
+    rts
+    
 ; Pinky's dot limit is always set to zero, causing him to leave home immediately when every level begins. 
 ; For the first level, Inky has a limit of 30 dots, and Clyde has a limit of 60. This results in Pinky exiting immediately which, in turn,
 ; activates Inky's dot counter. His counter must then reach or exceed 30 dots before he can leave the house. Once Inky starts to leave,
@@ -465,15 +512,20 @@ init_ghosts
     
     ; init ghost dot count table
     move.l  #ghosts+2*Ghost_SIZEOF,ghost_which_counts_dots
+    ; init pen tile
+    move.l  #(RED_XSTART_POS>>3)<<16+(OTHERS_YSTART_POS>>3),pen_tile_xy
     
 .igloop
     ; copy all 4 colors (back them up)
     move.l (a3)+,palette(a0)
-    move.l (a3)+,palette+4(a0)   
+    move.l (a3)+,palette+4(a0)
     move.l  a4,color_register(a0)
+    ; set/reset palette
+    bsr set_normal_ghost_palette
+    
     addq.l  #8,a4   ; next color register range
     move.l  a1,copperlist_address(a0)
-    add.l   #16,a1      ; FUCK
+    add.l   #16,a1
     
     clr.w   mode_counter(a0)
     clr.w   speed_table_index(a0)
@@ -531,6 +583,7 @@ init_ghosts
     move.l  #red_ghost_frame_table,frame_table(a0)
     move.l  #red_frightened_ghost_white_frame_table,frightened_ghost_white_frame_table(a0)
     move.l  #red_frightened_ghost_blue_frame_table,frightened_ghost_blue_frame_table(a0)
+    move.l  #red_ghost_eye_frame_table,eye_frame_table(a0)
     move.w  #(NB_TILES_PER_LINE-6),home_corner_xtile(a0)
     bsr     update_ghost_target
     move.w  #-1,h_speed(a0)
@@ -544,6 +597,7 @@ init_ghosts
     move.l  #pink_ghost_frame_table,frame_table(a0)
     move.l  #pink_frightened_ghost_white_frame_table,frightened_ghost_white_frame_table(a0)
     move.l  #pink_frightened_ghost_blue_frame_table,frightened_ghost_blue_frame_table(a0)
+    move.l  #pink_ghost_eye_frame_table,eye_frame_table(a0)
     bsr     update_ghost_target
     move.w  #0,home_corner_ytile(a0)
     move.w  #1,v_speed(a0)
@@ -559,6 +613,7 @@ init_ghosts
     move.l  #cyan_frightened_ghost_blue_frame_table,frightened_ghost_blue_frame_table(a0)
     move.w  #(NB_TILES_PER_LINE-4),home_corner_xtile(a0)
     move.w  #(NB_TILE_LINES+1),home_corner_ytile(a0) 
+    move.l  #cyan_ghost_eye_frame_table,eye_frame_table(a0)
     bsr update_ghost_target
     move.w  #-1,v_speed(a0)
     ; orange ghost
@@ -571,6 +626,7 @@ init_ghosts
     move.l  #orange_ghost_frame_table,frame_table(a0)
     move.l  #orange_frightened_ghost_white_frame_table,frightened_ghost_white_frame_table(a0)
     move.l  #orange_frightened_ghost_blue_frame_table,frightened_ghost_blue_frame_table(a0)
+    move.l  #orange_ghost_eye_frame_table,eye_frame_table(a0)
     move.w  #(NB_TILE_LINES+1),home_corner_ytile(a0)
     bsr update_ghost_target
     move.w  #-1,v_speed(a0)
@@ -672,10 +728,15 @@ update_ghost_target
     beq.b   .scatter
     cmp.w   #MODE_CHASE,d0
     beq.b   .chase
+    cmp.w   #MODE_EYES,d0
+    beq.b   .run_home
     ; fright: no update
     rts
 .scatter:
     move.l  home_corner_xtile(a0),target_xtile(a0)  ; hack copy x & y at once
+    rts
+.run_home:
+    move.l  pen_tile_xy,target_xtile(a0)  ; hack copy x & y at once
     rts
 .chase:
     lea player(pc),a1
@@ -886,9 +947,32 @@ draw_debug
         even
 
 draw_ghosts:
+    tst.w  ghost_eaten_timer
+    bmi.b   .no_ghost_eat
+    bsr hide_ghost_sprites
+    
+    ; store score
+    lea player(pc),a4
+    move.l  score_frame(pc),a0
+    move.w  xpos(a4),d0
+    sub.w   #24,d0
+    move.w  ypos(a4),d1
+    sub.w   #30,d1
+    bsr store_sprite_pos      
+    move.l  d0,(a0)
+    lea score_sprite_entry,a1
+    move.l  a0,d2
+    move.w  d2,(6,a1)
+    swap    d2
+    move.w  d2,(2,a1)
+    ; change color for score, ghost has disappeared anyway
+
+    move.w  #$00ff,_custom+color+32+8+2
+    ; don't place sprites
+    rts
+.no_ghost_eat
     move.w  player_killed_timer(pc),d6
     bmi.b   .normal
-    LOGPC   100
     cmp.w   #PLAYER_KILL_TIMER-NB_TICKS_PER_SEC,d6
     bcc.b   .normal
     ; clear the ghosts sprites after 1 second when pacman is killed
@@ -913,12 +997,14 @@ draw_ghosts:
     sub.w  #4+Y_START,d1    ; not 8, because maybe table is off?
     bsr store_sprite_pos    
     move.w  mode(a0),d3 ; scatter/chase/fright/return base
+    cmp.w   #MODE_EYES,d3
+    beq.b   .eyes
+
     move.l  frame_table(a0),a1
     move.w  frame(a0),d2
     lsr.w   #2,d2   ; 8 divide to get 0,1, divide by 4 then mask after adding direction
     cmp.w   #MODE_FRIGHT,d3
     bne.b   .no_fright
-    move.w  #1,$100
     ; change palette for that sprite
     move.w  mode_timer(a0),d4
 
@@ -931,13 +1017,9 @@ draw_ghosts:
     bne.b   .no_toggle
     clr.w   d4
     eor.b   #1,flashing_as_white(a0)
-    st.b   must_set_fright_sprite(a0)   ; optim, don't rewrite palette over and over
 .no_toggle
     move.w  d4,flash_toggle_timer(a0)
 .no_flashing
-    tst.b   must_set_fright_sprite(a0)
-    beq.b   .fright
-    clr.b   must_set_fright_sprite(a0)
     move.l  color_register(a0),a3
     lea     frightened_ghosts_blue_palette(pc),a2
     ; select proper palette (blue/white)
@@ -962,6 +1044,7 @@ draw_ghosts:
 .no_white2
     bclr    #0,d2   ; even
     add.w   d2,d2       ; times 2
+.end_anim
     move.l  (a1,d2.w),a1
     move.l  d0,(a1)     ; store control word
     move.l  a1,d2    
@@ -973,7 +1056,17 @@ draw_ghosts:
     add.l   #Ghost_SIZEOF,a0
     dbf d7,.gloop
     rts
-    
+
+.eyes
+    move.l eye_frame_table(a0),a1
+    move.w   direction(a0),d2
+    lea ghost_eyes(pc),a2       ; palette
+    move.l  color_register(a0),a3
+    move.l  (a2)+,(a3)+
+    move.l  (a2)+,(a3)+
+    ; TODO set black tunnel sprite proper palette in copperlist
+    bra.b   .end_anim
+     
 draw_all
     DEF_STATE_CASE_TABLE
     
@@ -1013,8 +1106,13 @@ draw_all
 .ready_off
     bsr   draw_ghosts
 
-    ; draw_pacman
     lea player(pc),a2
+    ; draw_pacman
+    tst.w  ghost_eaten_timer
+    bmi.b   .normal_pacdraw
+    lea     pac_dead+64*12,a0       ; empty
+    bra.b   .pacblit
+.normal_pacdraw
     tst.w  player_killed_timer
     bmi.b   .normal
     lea     pac_dead,a0
@@ -1239,12 +1337,6 @@ draw_bonuses:
     add.w   #16,d1
     dbf d4,.dbloopy
 .outb
-    ; TEMP
-    lea	screen_data+SCREEN_PLANE_SIZE,a1
-    move.l #NB_BYTES_PER_MAZE_LINE*8,d0
-    moveq.l #0,d1
-    move.l  #20,d2
-    ;bsr clear_plane_any
     
     rts
     
@@ -1273,10 +1365,11 @@ draw_bonus
     movem.l (a7)+,d0-d3/a0-a1
     rts
     
-draw_maze:    
-    move.w  colors+6,maze_color     ; save original maze color
+draw_maze:
+    lea game_palette(pc),a0
+    move.w  (2,a0),maze_color     ; save original maze color
     move.w  #MAZE_BLINK_TIME,maze_blink_timer
-    move.b  #4,maze_blink_nb_times
+    move.b  #8,maze_blink_nb_times
     ; copy maze data in bitplanes
     lea maze_data(pc),a0
     lea screen_data,a1
@@ -1456,7 +1549,7 @@ level3_interrupt:
     beq.b   .blitter
     ; copper
     bsr draw_all
-    ;;bsr draw_debug
+    ;bsr draw_debug
     bsr update_all
     move.w  vbl_counter,d0
     addq.w  #1,d0
@@ -1498,7 +1591,7 @@ update_all
     DEF_STATE_CASE_TABLE
 
 .life_lost
-    bra update_power_dot_flashing
+    rts  ; bra update_power_dot_flashing
 
 .level_completed
     subq.w  #1,maze_blink_timer
@@ -1506,16 +1599,19 @@ update_all
     move.w  #MAZE_BLINK_TIME,maze_blink_timer
     subq.b  #1,maze_blink_nb_times
     beq.b   .next_level
-    cmp.w  #$FFF,colors+6
+    eor.b   #1,.color_blue
     beq.b   .orig
     move.w  maze_color,d0
     bra.b   .chcol
 .orig
     move.w  #$FFF,d0
 .chcol
-    move.w  d0,colors+6
+    move.w  d0,_custom+color+2
 .no_change
     rts
+.color_blue
+    dc.w    0
+    
 .next_level
      move.w  #STATE_NEXT_LEVEL,current_state
      move.w #50,ready_timer
@@ -1530,6 +1626,12 @@ update_all
     rts
 .ready_off
     bsr update_power_dot_flashing
+    move.w  ghost_eaten_timer(pc),d6
+    bmi.b   .update_pac_and_ghosts
+    subq.w  #1,d6
+    move.w  d6,ghost_eaten_timer
+    rts
+.update_pac_and_ghosts
     bsr update_pac
     bsr update_ghosts
     bsr check_pac_ghosts_collisions
@@ -1580,27 +1682,32 @@ check_pac_ghosts_collisions
     move.w  mode(a4),d0
     cmp.w   #MODE_FRIGHT,d0
     beq.b   .pac_eats_ghost
+    cmp.w   #MODE_EYES,d0
+    beq.b   .nomatch        ; ignore eyes
     ; pacman is killed
     move.w  #PLAYER_KILL_TIMER,player_killed_timer
+    rts
+    
 .pac_eats_ghost:
+    move.w  #MODE_EYES,mode(a4)
     ; test display score with the proper color (reusing pink sprite palette)
-    IFEQ    1
-    move.l  score_frame_table+12,a0
-    move.w  #20,d0
-    move.w  #24,d1
-    bsr store_sprite_pos      
-    move.l  d0,(a0)
-    lea sprites+32,a1
-    move.l  a0,d2
-    move.w  d2,(6,a1)
-    swap    d2
-    move.w  d2,(2,a1)    
-    ; set proper positions for ghosrs
-    ENDC
+    move.w  #GHOST_KILL_TIMER,ghost_eaten_timer
+
+    move.w  next_ghost_score(pc),d0
+    add.w   #1,next_ghost_score
+    add.w   d0,d0
+    add.w   d0,d0
+    lea  score_value_table(pc),a0
+    move.l   (a0,d0.w),d1
+    add.l  d1,score
+    lea  score_frame_table(pc),a0
+    move.l  (a0,d0.w),d1
+    move.l  d1,score_frame
+    
     ; exits as soon as a collision is found
     rts
 
-update_ghosts
+update_ghosts:
     lea ghosts(pc),a4
     moveq.w #3,d7
     move.w  player_killed_timer(pc),d6
@@ -1623,6 +1730,9 @@ update_ghosts
 .gloop
     move.w  d7,-(a7)
     ; decrease mode timer
+    
+    cmp.w   #MODE_EYES,mode(a4)
+    beq.b   .eyes
     move.w  mode_timer(a4),d0
     subq.w  #1,d0
     beq.b   .new_mode
@@ -1633,6 +1743,9 @@ update_ghosts
     subq.w   #1,d0          ; sub for dbf
     bmi.b   .ghost_done     ; 0: no move for now
     ; now ghost can move once or twice
+    bra.b   .move_loop
+.eyes
+    moveq.w #1,d0   ;constant speed, super fast
 .move_loop
     move.w  d0,-(a7)
     move.w  frame(a4),d1
@@ -1646,6 +1759,9 @@ update_ghosts
     move.w  d0,d2
     move.w  d1,d3
 
+    cmp.w   #MODE_EYES,mode(a4)
+    beq.b   .no_pen
+    
     ; check if ghost is in the pen, part 1 quickcheck for the pen exit zone
     ; (which doesn't trigger the pen tile test when exiting)
     cmp.w   #RED_XSTART_POS,d0
@@ -1789,6 +1905,21 @@ update_ghosts
     rts
     
 .tile_change
+
+    cmp.w   #MODE_EYES,mode(a4)
+    bne.b   .no_eyes
+    ; has reached target?
+    cmp.w   pen_tile_xy(pc),d4
+    bne.b   .nothing
+    cmp.w   pen_tile_xy+2(pc),d5
+    bne.b   .nothing
+    ; reached target tile: respawn
+    move.l  previous_mode(a4),mode(a4)  ; hack also restores mode
+    move.l  a4,a0
+    bsr     set_normal_ghost_palette
+.nothing
+    bra.b   .no_reverse
+.no_eyes
     ; now the tricky bit: decide where to go
     ; first check for "reverse flag" signal
     tst.b   reverse_flag(a4)
@@ -1801,7 +1932,6 @@ update_ghosts
 .no_reverse
     ; direction NOT changed, check objective if not fright mode
     bsr .compute_possible_directions
-    move.w  d0,possible_directions  ; DEBUG
     move.w  d0,d3           ; save possible directions in D3
     move.w  mode(a4),d0
     cmp.w   #MODE_FRIGHT,d0
@@ -2076,9 +2206,12 @@ update_ghosts
 
 ; what: check if pen tile is valid
 ; - when already in the pen, can move inside it
-; - when in "eyes" mode (TODO)
+; - when in "eyes" mode
+; > D0,D1 (x,y),A4 (ghost struct)
 ; < Z=0 if not possible to walk on a pen tile
 .pen_tile_check
+    cmp.w   #MODE_EYES,mode(a4)
+    beq.b   .no_pen_tile
     cmp.b   #P,d0
     bne.b   .no_pen_tile
     ; pen tile: are we in the pen already
@@ -2125,6 +2258,7 @@ update_ghosts
     cmp.w   #6,d1
     beq.b   .maxed
 
+
     cmp.w   #MODE_SCATTER,d0
     beq.b   .chase
     cmp.w   #MODE_CHASE,d0
@@ -2146,6 +2280,13 @@ update_ghosts
     move.b  #1,reverse_flag(a4)
     bra.b   .mode_done
 .scatter
+    move.l  a4,a0
+    bsr is_elroy
+    tst.w   d0
+    beq.b   .ok_scatter
+    move.w  #MODE_CHASE,d0
+    bra.b   .switch_mode
+.ok_scatter:
     move.w  #MODE_SCATTER,D0
     bra.b   .switch_mode
 .maxed
@@ -2204,10 +2345,13 @@ compute_square_distance
 power_pill_taken
     move.l  d2,-(a7)
     ; resets next ghost eaten score
-    move.l  #200,next_ghost_score
+    clr.w  next_ghost_score
     lea ghosts(pc),a0
     moveq.w  #3,d0
 .gloop
+    cmp.w  #MODE_EYES,mode(a0)      ; don't fright the eyes
+    beq.b   .next
+    
     move.l  mode_timer(a0),previous_mode_timer(a0)  ; hack also saves mode
     move.w  #MODE_FRIGHT,mode(a0)
     ; set proper fright mode according to current level
@@ -2222,7 +2366,6 @@ power_pill_taken
     move.w  d2,mode_timer(a0)
     move.w  (a1)+,flash_timer(a0)
     clr.b   flashing_as_white(a0)
-    st.b   must_set_fright_sprite(a0)
     move.b  #1,reverse_flag(a0)
     bra.b   .next
 .no_time
@@ -2283,7 +2426,7 @@ update_pac
 .nowrap
     ; store
     move.w  d1,speed_table_index(a4)
-    bsr get_global_speed_table
+    move.l  global_speed_table(pc),a1
     ; faster when at least one ghost is in fright mode
     tst.w   fright_timer
     beq.b   .no_fright
@@ -2422,7 +2565,7 @@ update_pac
     cmp.b   #170,d4
     beq.b   .show_fruit
 .skip_fruit_test
-    cmp.b   #244,d4
+    cmp.b   #TOTAL_NUMBER_OF_DOTS,d4
     bne.b   .other
     ; no more dots: win
     move.w  #STATE_LEVEL_COMPLETED,current_state
@@ -3019,19 +3162,27 @@ bonus_level_score:  ; *10
 bonus_timer
     dc.w    0
 next_ghost_score
-    dc.l    0
+    dc.w    0
 previous_pacman_address
     dc.l    0
 ghost_which_counts_dots
     dc.l    0
 tunnel_sprite_control_word
     dc.l    0
+score_frame
+    dc.l    0
+global_speed_table
+    dc.l    0
 ; 0: level 1
-level_number
+level_number:
     dc.w    0
 player_killed_timer:
     dc.w    -1
-fright_timer
+ghost_eaten_timer:
+    dc.w    -1
+pen_tile_xy:
+    dc.l    0
+fright_timer:
     dc.w    0
 death_frame_offset
     dc.w    0
@@ -3039,6 +3190,13 @@ maze_blink_nb_times
     dc.b    0
 nb_lives
     dc.b    0
+nb_dots_eaten
+    dc.b    0
+elroy_threshold_1
+    dc.b    0
+elroy_threshold_2
+    dc.b    0
+    even
 
 bonus_clear_message
     dc.w    0
@@ -3049,9 +3207,7 @@ fruit_score     ; must follow score_table
     dc.w    10
     
     
-nb_dots_eaten
-    dc.b    0
-
+    
 player_kill_anim_table:
     REPT    NB_TICKS_PER_SEC/2
     dc.b    1
@@ -3117,11 +3273,7 @@ pac_anim_\1_end
     PAC_ANIM_TABLE  up
     PAC_ANIM_TABLE  down
 
-ghost_eyes_table
-    dc.l    ghost_eyes_0
-    dc.l    ghost_eyes_1
-    dc.l    ghost_eyes_2
-    dc.l    ghost_eyes_3
+
     
 
     
@@ -3273,7 +3425,9 @@ level5_and_higher:
 
 score_frame_table:
     dc.l    score_200,score_400,score_800,score_1600
-
+score_value_table
+    dc.l    20,40,80,160
+    
 ; what: get current move speed for ghost
 ; < A0: ghost structure
 ; > D0.W: 0,1,2 depending on level, mode, etc...
@@ -3289,18 +3443,7 @@ get_ghost_move_speed:
 .nowrap
     ; store
     move.w  d1,speed_table_index(a4)
-    ; now it depends on the ghost type and elroy mode
-    ; TODO handle elroy
-    move.w  mode(a4),d2 ; old mode
-    cmp.w   #MODE_FRIGHT,d2
-    beq.b   .fright
-; scatter/chase same speed: normal
-    move.w  #1*16,d2    ; table 1: normal
-    bra.b   .tunnel_test
-.fright:
-    move.w  #3*16,d2
-    bra.b   .no_slow
-.tunnel_test
+
     ; ok but are we in a tunnel or pen
     move.w  xpos(a4),d0
     move.w  ypos(a4),d1
@@ -3308,33 +3451,99 @@ get_ghost_move_speed:
     cmp.b   #T,d0
     beq.b   .tunnel
     cmp.b   #P,d0
-    bne.b   .no_slow
+    bne.b   .no_tunnel
 .tunnel
     move.w  #4*16,d2
+    bra.b   .table_computed
+.no_tunnel    
+    move.w  mode(a4),d2 ; old mode
+    cmp.w   #MODE_FRIGHT,d2
+    beq.b   .fright
+    ; now it depends on the ghost type and elroy mode
+; scatter/chase same speed: normal
+    move.l  a4,a0
+    bsr get_elroy_level
+    tst d0
+    beq.b   .no_elroy
+    cmp.w   #1,d0
+    beq.b   .elroy_level_1
+    ; level 2
+    move.w  #6*16,d2
+    bra.b   .table_computed
+.elroy_level_1    
+    move.w  #6*16,d1
+    bra.b   .table_computed
+.no_elroy
+    move.w  #1*16,d2    ; table 1: normal
+    bra.b   .table_computed
+.fright:
+    move.w  #3*16,d2
     
-.no_slow
-    bsr get_global_speed_table
+.table_computed
+    move.l  global_speed_table(pc),a1
     move.w  speed_table_index(a4),d0
     add.w   d2,d0
     move.b  (a1,d0.w),d0            ; get speed index
     ext.w   d0
     movem.l (a7)+,d1-d2/a1/a4
     rts
-    
-; > A1: speed table for the current level
-; (used for ghosts and also for pacman depending on the row)
-get_global_speed_table
-    move.w  level_number,d0
-    cmp.w   #20,d0
-    bcs.b   .below
-    move.w  #20,d0
-.below
-    add.w   d0,d0
-    add.w   d0,d0
-    lea speed_table(pc),a1
-    move.l  (a1,d0.w),a1    ; global speed table
+
+; < A0: ghost structure
+; > D0: 0 if not elroy, 1 if elroy level 1, 2 if elroy level 2    
+get_elroy_level:
+    moveq   #0,d0
+    cmp.l   #ghosts,a0
+    bne.b   .out
+    move.b  nb_dots_eaten(pc),d1
+    cmp.b   elroy_threshold_2(pc),d1
+    bcs.b   .level2
+    cmp.b   elroy_threshold_1(pc),d1
+    bcs.b   .level1
+.out
     rts
+.level1
+   move.w  #$F0,$dff180
+    moveq   #1,d0
+    rts
+.level2
+    move.w  #$F00,$dff180
+    moveq   #2,d0
+    rts
+; < A0: ghost structure
+; > D0: 0 if not elroy, 1 if elroy
+is_elroy:
+    moveq   #0,d0
+    cmp.l   #ghosts,a0
+    bne.b   .out
+    move.b  nb_dots_eaten(pc),d1
+    cmp.b   elroy_threshold_1(pc),d1
+    bcs.b   .level1
+.out
+    rts
+.level1
+    moveq   #1,d0
+    rts
+
     
+; number of dots remaining, triggers elroy1 mode
+elroy_table:
+    dc.b    20
+    dc.b    30
+    dc.b    40,40,40
+    dc.b    50,50,50
+    dc.b    60
+    dc.b    60
+    dc.b    60
+    dc.b    80
+    dc.b    80
+    dc.b    80
+    dc.b    100
+    dc.b    100
+    dc.b    100
+    dc.b    100
+    dc.b    120
+    dc.b    120
+    dc.b    120
 
  ; speed table at 60 Hz. Not compatible with 50 Hz if we want roughly same speed
 speed_table:  ; lifted from https://github.com/shaunlebron/pacman/blob/master/src/Actor.js
@@ -3509,29 +3718,30 @@ tunnel_color_reg = color+38
 colors:
    dc.w color,0     ; fix black (so debug can flash color0)
 sprites:
-    ; red ghost
+    ; tunnel mask
     dc.w    sprpt,0
     dc.w    sprpt+2,0
 ghost_sprites:
-    ; empty
+    ; red ghost
     dc.w    sprpt+4,0
     dc.w    sprpt+6,0
-    ; pink ghost
+    ; empty
     dc.w    sprpt+8,0
     dc.w    sprpt+10,0
-    ; empty / score for ghost eaten
+score_sprite_entry:
+    ; pink ghost / score for ghost eaten
     dc.w    sprpt+12,0
     dc.w    sprpt+14,0
-    ; cyan ghost
+    ; empty
     dc.w    sprpt+16,0
     dc.w    sprpt+18,0
-    ; empty
+    ; cyan ghost
     dc.w    sprpt+20,0
     dc.w    sprpt+22,0
-    ; orange ghost
+    ; empty
     dc.w    sprpt+24,0
     dc.w    sprpt+26,0
-    ; empty
+    ; orange ghost
     dc.w    sprpt+28,0
     dc.w    sprpt+30,0
 
@@ -3621,7 +3831,11 @@ bonus_pics:
     incbin  "galaxian.bin"
     incbin  "bell.bin"
     incbin  "key.bin" 
-
+bonus_scores:
+    incbin  "bonus_scores_0.bin"
+    incbin  "bonus_scores_1.bin"
+    incbin  "bonus_scores_2.bin"
+    incbin  "bonus_scores_3.bin"    ; 700
 
 black_sprite:
     dc.l    0   ; control word
@@ -3629,18 +3843,7 @@ black_sprite:
     dc.l    $FFFFFFFF
     ENDR
     
-ghost_eyes_0
-    dc.l    0
-    incbin  "ghost_eyes_0.bin"
-ghost_eyes_1
-    dc.l    0
-    incbin  "ghost_eyes_1.bin"
-ghost_eyes_2
-    dc.l    0
-    incbin  "ghost_eyes_2.bin"
-ghost_eyes_3
-    dc.l    0
-    incbin  "ghost_eyes_3.bin"
+
     
     
 DECL_GHOST:MACRO
@@ -3660,58 +3863,78 @@ DECL_GHOST:MACRO
 \1_frightened_ghost_white_frame_table
     dc.l    \1_frightened_ghost_white_0
     dc.l    \1_frightened_ghost_white_1
+\1_ghost_eye_frame_table
+    dc.l    \1_ghost_eyes_0
+    dc.l    \1_ghost_eyes_1
+    dc.l    \1_ghost_eyes_2
+    dc.l    \1_ghost_eyes_3
     
     ; all ghosts share the same graphics, only the colors are different
     ; but we need to replicate the graphics 8*4 times because of sprite control word
 \1_ghost_0
     dc.l    0
     incbin  "ghost_0.bin"
-    dc.l    0,0
+    dc.l    0
 \1_ghost_1
     dc.l    0
     incbin  "ghost_1.bin"
-    dc.l    0,0
+    dc.l    0
 \1_ghost_2
     dc.l    0
     incbin  "ghost_2.bin"
-    dc.l    0,0
+    dc.l    0
 \1_ghost_3
     dc.l    0
     incbin  "ghost_3.bin"
-    dc.l    0,0
+    dc.l    0
 \1_ghost_4
     dc.l    0
     incbin  "ghost_4.bin"
-    dc.l    0,0
+    dc.l    0
 \1_ghost_5
     dc.l    0
     incbin  "ghost_5.bin"
-    dc.l    0,0
+    dc.l    0
 \1_ghost_6
     dc.l    0
     incbin  "ghost_6.bin"
-    dc.l    0,0
+    dc.l    0
 \1_ghost_7
     dc.l    0
     incbin  "ghost_7.bin"
-    dc.l    0,0
+    dc.l    0
 \1_frightened_ghost_blue_0
     dc.l    0
     incbin  "frightened_ghost_blue_0.bin"
-    dc.l    0,0
+    dc.l    0
 \1_frightened_ghost_blue_1
     dc.l    0
     incbin  "frightened_ghost_blue_1.bin"
-    dc.l    0,0
+    dc.l    0
 \1_frightened_ghost_white_0
     dc.l    0
     incbin  "frightened_ghost_white_0.bin"
-    dc.l    0,0
+    dc.l    0
 \1_frightened_ghost_white_1
     dc.l    0
     incbin  "frightened_ghost_white_1.bin"
-    dc.l    0,0
-
+    dc.l    0
+\1_ghost_eyes_0
+    dc.l    0
+    incbin  "ghost_eyes_0.bin"
+    dc.l    0
+\1_ghost_eyes_1
+    dc.l    0
+    incbin  "ghost_eyes_1.bin"
+    dc.l    0
+\1_ghost_eyes_2
+    dc.l    0
+    incbin  "ghost_eyes_2.bin"
+    dc.l    0
+\1_ghost_eyes_3
+    dc.l    0
+    incbin  "ghost_eyes_3.bin"
+    dc.l    0
     ENDM
         
     DECL_GHOST  red
@@ -3722,18 +3945,23 @@ DECL_GHOST:MACRO
 score_200:
     dc.l    0
     incbin  "scores_0.bin"      ; 64 bytes each, palette from pink sprite
+    dc.l    0
 score_400:
     dc.l    0
     incbin  "scores_1.bin"
+    dc.l    0
 score_800:
     dc.l    0
     incbin  "scores_2.bin"
+    dc.l    0
 score_1600:
     dc.l    0
     incbin  "scores_3.bin"
+    dc.l    0
 
 
 empty_sprite
-    dc.l    0
+    dc.l    0,0
+
     
     	

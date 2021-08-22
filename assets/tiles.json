@@ -96,6 +96,12 @@
    "start_y":128
   },
   {
+  "name":"bonus_scores",
+   "frames":4,
+   "start_x":0,
+   "start_y":144
+ },
+  {
     "ignore" : true,
   "name":"orange_ghost",
    "sprite_number":6,
