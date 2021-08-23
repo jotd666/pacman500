@@ -7,18 +7,21 @@ bugs:
 - blinking power dots freq problem
 - 2 cyan ghosts at some point
 - test ghosts targets
-- cookie cut for bonuses
-- elroy bug: 1: remaining!=eaten, 2: elroy tout de suite
+- cookie cut for bonuses ou autre solution???
+- elroy debug!!
+- remove bonus doesn't work well
+- score for bonus doesn't disappear
 
 random bugs:
 
+- pacman corruption left/upper
 - to right: pacman trashed mem corruption???
-- 241 dots eaten: no level end
-- end of level: no pacman position reset
+- 241 dots eaten: no level end: happened 2 times
 - score goes berzerk
 
 todo:
 
+- end of level: clear screen (pacman pos)
 - bonus score (blit, another plane, maybe hack palette so bonus+yellow = yellow)
 - black tunnel mask
 - leave pen behaviour after a life is lost

@@ -29,6 +29,7 @@
     include "whdmacros.i"
 
     incdir "../sprites"
+    incdir "../sounds"
 
 	
 ;CIA-A registre port A (bouton souris)
@@ -152,7 +153,7 @@ BONUS_X_POS = RED_XSTART_POS-24
 BONUS_Y_POS = RED_YSTART_POS+16
 BONUS_OFFSET = $28F  ;(NB_TILES_PER_LINE*20)+14
 BONUS_TIMER_VALUE = NB_TICKS_PER_SEC*10
-
+BONUS_SCORE_TIMER_VALUE = NB_TICKS_PER_SEC*2
 BLINK_RATE = 2*(NB_TICKS_PER_SEC/5) ; for powerdots
 PREPOST_TURN_LOCK = 4
 
@@ -380,7 +381,7 @@ Start:
     move.l  gfxbase_copperlist,StartList(a1) ; adresse du début de la liste
     move.l  gfxbase_copperlist,cop1lc(a5) ; adresse du début de la liste
     clr.w  copjmp1(a5)
-    move.w #$8060,dmacon(a5)        ; réinitialisation du canal DMA
+    ;;move.w #$8060,dmacon(a5)        ; réinitialisation du canal DMA
     
     move.l  gfxbase,a1
     jsr _LVOCloseLibrary(a6)
@@ -441,6 +442,8 @@ init_level:
 
     lea bonus_level_score(pc),a0
     move.w  (a0,d2.w),fruit_score
+    lea bonus_level_table(pc),a0
+    move.w  (a0,d2.w),fruit_score_index
     move.b  #0,nb_dots_eaten
     
     ; speed table
@@ -1077,15 +1080,11 @@ draw_all
     rts
     
 .game_over
-    lea	screen_data+SCREEN_PLANE_SIZE,a1
     move.w  #72,d0
     move.w  #136,d1
+    move.w  #$0f00,d2   ; red
     lea game_over_string(pc),a0
-    bsr write_string
-    lea	screen_data+SCREEN_PLANE_SIZE*3,a1
-    move.w  #72,d0
-    move.w  #136,d1
-    bsr write_string
+    bsr write_color_string
     bra.b   .draw_complete
 .playing
     tst.w   ready_timer
@@ -1099,9 +1098,10 @@ draw_all
     move.w  #14,d2   ; 96
     bsr clear_plane_any
     bra.b   .ready_off
-.still_ready        
+.still_ready
+    move.w  #$0ff0,d2
     lea ready_string(pc),a0
-    bsr write_string
+    bsr write_color_string
     ;;bra.b   .draw_complete
 .ready_off
     bsr   draw_ghosts
@@ -1206,6 +1206,23 @@ draw_all
 .zap_clear    
     dbf d0,.clrpdloop
 .powerdot_done
+    cmp.w   #BONUS_SCORE_TIMER_VALUE,bonus_score_timer
+    bne.b   .no_bonus_score_appear
+    move.w  fruit_score_index(pc),d0
+    bsr draw_bonus_score
+.no_bonus_score_appear
+    tst.w   bonus_clear_message
+    beq.b   .no_bonus_score_disappear
+    clr.w   bonus_clear_message
+    move.w  #BONUS_X_POS,d0
+    move.w  #BONUS_Y_POS,d1
+    move.w  #4,d2
+    lea	screen_data,a1
+    move.w  #3,d3
+    bsr clear_plane_any
+    add.l  #SCREEN_PLANE_SIZE*3,a1
+    bsr clear_plane_any
+.no_bonus_score_disappear    
     ; bonus
     cmp.w   #BONUS_TIMER_VALUE,bonus_timer
     bne.b   .no_fruit_appear
@@ -1218,6 +1235,7 @@ draw_all
     tst.w   bonus_clear_message
     beq.b   .no_fruit_disappear
     clr.w   bonus_clear_message
+    
     move.w  #BONUS_X_POS,d0
     move.w  #BONUS_Y_POS,d1
     move.w  #4,d2
@@ -1263,6 +1281,61 @@ random:
     addi.l #$bb40e62d,d0
     rol.l #6,d0
     move.l  d0,previous_random
+    rts
+
+; < D0: 0,1,2,... score index 100,300,500,700 ...
+
+draw_bonus_score:
+    move.w  d0,d3
+    cmp.w   #4,d0
+    bcs.b   .under_thousand
+    sub.w   #4,d0
+.under_thousand
+    lsl.w   #6,d0       ; *64
+    lea bonus_scores,a0
+    add.w   d0,a0
+    lea	screen_data+BONUS_X_POS/8+BONUS_Y_POS*NB_BYTES_PER_LINE,a1
+    move.l  a1,a2
+    ; change x when >= 1000
+    moveq.w  #10,d0
+    cmp.w   #4,d3
+    bcs.b   .no_extra_zero1
+    ; extra zero: x is more to the left
+    moveq.l  #6,d0    
+.no_extra_zero1
+    moveq.l  #0,d1
+    moveq.l #-1,d2
+    bsr blit_plane
+    lea (SCREEN_PLANE_SIZE*3,a2),a1
+    moveq.l  #10,d0
+    cmp.w   #4,d3
+    bcs.b   .no_extra_zero2
+    moveq.l  #6,d0    
+.no_extra_zero2
+    moveq.l  #0,d1
+    moveq.l #-1,d2
+    bsr blit_plane
+    
+    cmp.w   #4,d3
+    bcs.b   .no_extra_zero
+    bsr wait_blit       ; wait else blit is going to write concurrently
+    add.l  #NB_BYTES_PER_LINE*4,a2
+    ; add an extra zero character to the right
+    move.l  #%0011000000000000000,d0
+    move.l  #%0100100000000000000,d1
+    moveq.w #1,d2
+.orloop
+    or.l    d0,(a2)
+    or.l    d1,(NB_BYTES_PER_LINE,a2)
+    or.l    d1,(NB_BYTES_PER_LINE*2,a2)
+    or.l    d1,(NB_BYTES_PER_LINE*3,a2)
+    or.l    d1,(NB_BYTES_PER_LINE*4,a2)
+    or.l    d1,(NB_BYTES_PER_LINE*5,a2)
+    or.l    d0,(NB_BYTES_PER_LINE*6,a2)
+    lea (SCREEN_PLANE_SIZE*3,a2),a2
+    dbf d2,.orloop
+.no_extra_zero
+    
     rts
     
 ; what: clears a plane of any width (ATM not using blitter)
@@ -1422,7 +1495,7 @@ draw_dots:
     moveq.l #-1,d0
     move.w  d0,(a1)
     move.w  d0,(NB_BYTES_PER_LINE,a1)
-    add.l   #SCREEN_PLANE_SIZE,a1
+    add.l   #SCREEN_PLANE_SIZE*3,a1
     move.w  d0,(a1)
     move.w  d0,(NB_BYTES_PER_LINE,a1)
 
@@ -1501,9 +1574,17 @@ init_interrupts
     lea saved_vectors(pc),a1
     move.l  ($68,a0),(a1)+
     move.l  ($6C,a0),(a1)+
+    move.l  ($78,a0),(a1)+
     
     lea level3_interrupt(pc),a1
     move.l  a1,($6C,a0)
+    
+
+    ; init phx ptplayer, needs a6 as custom, a0 as vbr (which is zero)
+
+    moveq.l #1,d0
+    lea _custom,a6
+    jsr _mt_install_cia
     
     move.w  (dmaconr,a5),saved_dmacon
     move.w  (intenar,a5),saved_intena
@@ -1513,9 +1594,11 @@ init_interrupts
 restore_interrupts:
     ; assuming VBR at 0
     sub.l   a0,a0
+    
     lea saved_vectors(pc),a1
     move.l  (a1)+,($68,a0)
     move.l  (a1)+,($6C,a0)
+    move.l  (a1)+,($78,a0)
 
     move.w  saved_dmacon,d0
     bset    #15,d0
@@ -1524,11 +1607,16 @@ restore_interrupts:
     bset    #15,d0
     move.w  d0,(intena,a5)
 
+    ; this crashes
+    ;lea _custom,a6
+    ;jsr _mt_remove_cia
+
     rts
     
 saved_vectors
         dc.l    0   ; keyboard
         dc.l    0   ; vblank
+        dc.l    0   ; cia b
 saved_dmacon
     dc.w    0
 saved_intena
@@ -1640,6 +1728,10 @@ remove_bonus
     move.b  #0,dot_table+BONUS_OFFSET
     move.w  #1,bonus_clear_message      ; tell draw routine to clear
     clr.w   bonus_timer
+    rts
+remove_bonus_score
+    move.w  #1,bonus_score_clear_message      ; tell draw routine to clear
+    clr.w   bonus_score_timer
     rts
 update_power_dot_flashing
     ; power dot blink timer
@@ -2407,6 +2499,13 @@ update_pac
     ; timeout: make fruit disappear, no score
     bsr remove_bonus
 .no_fruit 
+    tst.w   bonus_score_timer    
+    beq.b   .no_fruit_score
+    subq.w  #1,bonus_score_timer
+    bne.b   .no_fruit_score
+    ; timeout: make fruit score disappear
+    bsr remove_bonus_score
+.no_fruit_score
 
     ; player
     lea player(pc),a4
@@ -2580,6 +2679,8 @@ update_pac
     rts
 .bonus_eaten:
     bsr remove_bonus
+    ; show score
+    move.w  #BONUS_SCORE_TIMER_VALUE,bonus_score_timer
     bra.b   .other
 
 .show_fruit
@@ -2855,6 +2956,9 @@ blit_plane
 ; < D2: blit width in bytes (+2)
 ; < D3: blit mask
 ; trashes: D0-D1, A1
+;
+; if A1 is already computed with X/Y offset and no shifting, an optimization
+; skips the XY offset computation
 
 blit_plane_any:
     movem.l d2-d4/a2-a5,-(a7)
@@ -2871,25 +2975,27 @@ blith = 16
     ; pre-compute the maximum shit here
     lea mul40_table(pc),a2
     add.w   d1,d1
+    beq.b   .d1_zero    ; optim
     move.w  (a2,d1.w),d1
     swap    d1
     clr.w   d1
     swap    d1
+.d1_zero
+    move.l  #$09f00000,d4    ;A->D copy, ascending mode
     move    d0,d3
-
+    beq.b   .d0_zero
     and.w   #$F,D3
     and.w   #$1F0,d0
     lsr.w   #3,d0
     add.w   d0,d1
     add.l   d1,a1       ; plane position
-    
+
     swap    d3
     clr.w   d3
     lsl.l   #8,d3
     lsl.l   #4,d3
-    
-    move.l  #$09f00000,d4    ;A->D copy, ascending mode
     or.l   d3,d4            ; add shift
+.d0_zero    
 
 	move.w #NB_BYTES_PER_LINE,d0
     sub.w   d2,d0       ; blit width
@@ -3064,14 +3170,59 @@ write_decimal_number
     dc.b    0
     even
     
-    
-; what: writes a text in a single plane
+; what: writes a text in a given color
 ; args:
+; < A0: c string
+; < D0: X (multiple of 8)
+; < D1: Y
+; < D2: RGB4 color (must be in palette!)
+; > D0: number of characters written
+; trashes: none
+
+write_color_string
+    movem.l D1-D5/A1,-(a7)
+    lea game_palette(pc),a1
+    moveq   #15,d3
+    moveq   #0,d5
+.search
+    move.w  (a1)+,d4
+    cmp.w   d4,d2
+    beq.b   .color_found
+    addq.w  #1,d5
+    dbf d3,.search
+    moveq   #0,d0   ; nothing written
+    bra.b   .out
+.color_found
+    ; d5: color index
+    lea screen_data,a1
+    moveq   #3,d3
+    move.w  d0,d4
+.plane_loop
 ; < A0: c string
 ; < A1: plane
 ; < D0: X (multiple of 8)
 ; < D1: Y
 ; > D0: number of characters written
+    btst    #0,d5
+    beq.b   .skip_plane
+    move.w  d4,d0
+    bsr write_string
+.skip_plane
+    lsr.w   #1,d5
+    add.l   #SCREEN_PLANE_SIZE,a1
+    dbf d3,.plane_loop
+.out
+    movem.l (a7)+,D1-D5/A1
+    rts
+    
+; what: writes a text in a single plane
+; args:
+; < A0: c string
+; < A1: plane
+; < D0: X (multiple of 8 else it's rounded)
+; < D1: Y
+; > D0: number of characters written
+; trashes: none
 
 write_string
     movem.l A0-A2/d1-D2,-(a7)
@@ -3161,6 +3312,8 @@ bonus_level_score:  ; *10
     dc.w    10,30,50,50,70,70,100,100,200,200,300,300,500
 bonus_timer
     dc.w    0
+fruit_score_index:
+    dc.w    0
 next_ghost_score
     dc.w    0
 previous_pacman_address
@@ -3182,6 +3335,8 @@ ghost_eaten_timer:
     dc.w    -1
 pen_tile_xy:
     dc.l    0
+bonus_score_timer:
+    dc.w    0
 fright_timer:
     dc.w    0
 death_frame_offset
@@ -3199,6 +3354,8 @@ elroy_threshold_2
     even
 
 bonus_clear_message
+    dc.w    0
+bonus_score_clear_message
     dc.w    0
     
 score_table
@@ -3494,7 +3651,8 @@ get_elroy_level:
     moveq   #0,d0
     cmp.l   #ghosts,a0
     bne.b   .out
-    move.b  nb_dots_eaten(pc),d1
+    move.b  #TOTAL_NUMBER_OF_DOTS,d1
+    sub.b   nb_dots_eaten(pc),d1
     cmp.b   elroy_threshold_2(pc),d1
     bcs.b   .level2
     cmp.b   elroy_threshold_1(pc),d1
@@ -3515,7 +3673,8 @@ is_elroy:
     moveq   #0,d0
     cmp.l   #ghosts,a0
     bne.b   .out
-    move.b  nb_dots_eaten(pc),d1
+    move.b  #TOTAL_NUMBER_OF_DOTS,d1
+    sub.b   nb_dots_eaten(pc),d1
     cmp.b   elroy_threshold_1(pc),d1
     bcs.b   .level1
 .out
@@ -3529,8 +3688,12 @@ is_elroy:
 elroy_table:
     dc.b    20
     dc.b    30
-    dc.b    40,40,40
-    dc.b    50,50,50
+    dc.b    40
+    dc.b    40
+    dc.b    40
+    dc.b    50
+    dc.b    50
+    dc.b    50
     dc.b    60
     dc.b    60
     dc.b    60
@@ -3695,8 +3858,10 @@ HWSPR_TAB_YPOS:
 
 dot_table
     ds.b    NB_TILES_PER_LINE*NB_TILE_LINES
-    
-    SECTION  S3,DATA,CHIP
+    SECTION  S3,CODE
+    include ptplayer.s
+
+    SECTION  S4,DATA,CHIP
 ; main copper list
 coplist
 bitplanes:
@@ -3783,10 +3948,6 @@ end_color_copper:
 screen_data:
     ds.b    SCREEN_PLANE_SIZE*NB_PLANES+NB_BYTES_PER_LINE,0
 	
-
-
-
-
     
     
 pac_left_0
@@ -3832,9 +3993,9 @@ bonus_pics:
     incbin  "bell.bin"
     incbin  "key.bin" 
 bonus_scores:
-    incbin  "bonus_scores_0.bin"
-    incbin  "bonus_scores_1.bin"
-    incbin  "bonus_scores_2.bin"
+    incbin  "bonus_scores_0.bin"    ; 100
+    incbin  "bonus_scores_1.bin"    ; 300
+    incbin  "bonus_scores_2.bin"    ; 500
     incbin  "bonus_scores_3.bin"    ; 700
 
 black_sprite:
@@ -3959,7 +4120,11 @@ score_1600:
     incbin  "scores_3.bin"
     dc.l    0
 
-
+killed_sound
+    incbin  "pacman_killed.raw"
+    even
+killed_sound_end
+    
 empty_sprite
     dc.l    0,0
 
