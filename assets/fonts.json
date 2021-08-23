@@ -23,6 +23,25 @@
    "frames":14,
    "start_x":0,
    "start_y":16
+ },
+ {
+   "name":"copyright",
+   "frames":1,
+   "start_x":101,
+   "start_y":8
+ },
+ {
+   "name":"pts",
+   "frames":3,
+   "start_x":122,
+   "start_y":8
+ },
+ {
+   "name":"namco",
+   "frames":1,
+   "start_x":0,
+   "start_y":24,
+   "width":64
  }
  ]
 }

@@ -105,8 +105,10 @@ MODE_CHASE = 20
 MODE_FRIGHT = 30
 MODE_EYES = 40
 
-; TODO: set 60
+; actual nb ticks (PAL)
 NB_TICKS_PER_SEC = 50
+; game logic ticks
+ORIGINAL_TICKS_PER_SEC = 60
 
 ; wall tile types
 W = 4   ; wall
@@ -152,8 +154,8 @@ OTHERS_YSTART_POS = RED_YSTART_POS+24
 BONUS_X_POS = RED_XSTART_POS-24
 BONUS_Y_POS = RED_YSTART_POS+16
 BONUS_OFFSET = $28F  ;(NB_TILES_PER_LINE*20)+14
-BONUS_TIMER_VALUE = NB_TICKS_PER_SEC*10
-BONUS_SCORE_TIMER_VALUE = NB_TICKS_PER_SEC*2
+BONUS_TIMER_VALUE = NB_TICKS_PER_SEC*10     ; ORIGINAL_TICKS_PER_SEC?
+BONUS_SCORE_TIMER_VALUE = NB_TICKS_PER_SEC*2     ; ORIGINAL_TICKS_PER_SEC?
 BLINK_RATE = 2*(NB_TICKS_PER_SEC/5) ; for powerdots
 PREPOST_TURN_LOCK = 4
 
@@ -183,6 +185,7 @@ STATE_GAME_OVER = 1*4
 STATE_LEVEL_COMPLETED = 2*4
 STATE_NEXT_LEVEL = 3*4
 STATE_LIFE_LOST = 4*4
+STATE_INTRO_SCREEN = 5*4
 
 ; jump table macro, used in draw and update
 DEF_STATE_CASE_TABLE:MACRO
@@ -197,6 +200,7 @@ DEF_STATE_CASE_TABLE:MACRO
     dc.l    .level_completed
     dc.l    .next_level
     dc.l    .life_lost
+    dc.l    .intro_screen
     ENDM
     
 ; write current PC value to some address
@@ -236,6 +240,10 @@ Start:
     move.l d0,gfxbase
     move.l  d0,a4
     move.l StartList(a4),gfxbase_copperlist
+
+;DMA disabled, no multitask
+    move.l  4,a6
+    jsr _LVOForbid(a6)
     
 ;    sub.l   a1,a1
 ;    move.l  a4,a6
@@ -243,55 +251,15 @@ Start:
 ;    jsr (_LVOWaitTOF,a6)
 ;    jsr (_LVOWaitTOF,a6)
 
-    
+    move.w  #STATE_INTRO_SCREEN,current_state
     
     bsr init_interrupts
-    
-.restart    
+    ; shut off dma
     lea _custom,a5
+    move.w #$03E0,dmacon(A5)
+    
+    ; intro screen
     move.w  #$7FFF,(intena,a5)
-    bsr clear_screen
-    
-    bsr init_new_play
-
-.new_level  
-    bsr init_level
-    lea _custom,a5
-    move.w  #$7FFF,(intena,a5)
-
-    ; do it first, as the last bonus overwrites bottom left of screen
-    bsr draw_bonuses    
-    bsr draw_maze
-    ; compute tunnel position sprite
-    move.w  #TUNNEL_MASK_X,d0
-    move.w  #TUNNEL_MASK_Y,d1
-    bsr store_sprite_pos
-    move.l  d0,tunnel_sprite_control_word
-   
-    ; for debug
-    ;;bsr draw_bounds
-
-    lea	screen_data+SCREEN_PLANE_SIZE*3,a1  ; white
-    lea p1_string(pc),a0
-    move.w  #232,d0
-    move.w  #16,d1
-    bsr write_string
-    lea score_string(pc),a0
-    move.w  #232,d0
-    add.w  #8,d1
-    bsr write_string
-    
-    lea high_score_string(pc),a0
-    move.w  #232,d0
-    move.w  #48,d1
-    bsr write_string
-    lea score_string(pc),a0
-    move.w  #232,d0
-    add.w  #8,d1
-    bsr write_string
-    
-    bsr draw_dots
-
     
     moveq #NB_PLANES,d4
     lea	bitplanes,a0              ; adresse de la Copper-List dans a0
@@ -311,12 +279,7 @@ Start:
     add.l #SCREEN_PLANE_SIZE,d1       ; next plane of maze
 
     dbf d4,.mkcl
- 
-	
-;DMA disabled, no multitask
-    move.l  4,a6
-    jsr _LVOForbid(a6)
-    move.w #$03E0,dmacon(A5)
+    
 
     lea game_palette(pc),a0
     lea _custom+color,a1
@@ -343,8 +306,52 @@ Start:
 
     bsr hide_sprites
 
-    ; init sprite, bitplane, whatever dma (not audio ATM)
-    move.w #$83E0,dmacon(a5)
+    bsr clear_screen
+    
+    bsr draw_score
+
+    move.w  #0,intro_timer
+
+    bsr wait_bof
+    ; init sprite, bitplane, whatever dma
+    move.w #$83EF,dmacon(a5)
+    move.w #$C038,intena(a5)
+    
+.intro_loop
+    move.l  joystick_state(pc),d0
+    btst    #JPB_BTN_RED,d0
+    beq.b   .intro_loop
+    
+.restart    
+    lea _custom,a5
+    move.w  #$7FFF,(intena,a5)
+    bsr clear_screen
+    bsr draw_score
+    
+    bsr init_new_play
+
+.new_level  
+    bsr init_level
+    lea _custom,a5
+    move.w  #$7FFF,(intena,a5)
+
+    ; do it first, as the last bonus overwrites bottom left of screen
+    bsr draw_bonuses    
+    bsr draw_maze
+    ; compute tunnel position sprite
+    move.w  #TUNNEL_MASK_X,d0
+    move.w  #TUNNEL_MASK_Y,d1
+    bsr store_sprite_pos
+    move.l  d0,tunnel_sprite_control_word
+   
+    ; for debug
+    ;;bsr draw_bounds
+    
+    bsr draw_dots
+    
+
+    bsr hide_sprites
+
     ; enable copper interrupts, mainly
 
 
@@ -359,6 +366,8 @@ Start:
     beq.b   .out
     DEF_STATE_CASE_TABLE
     
+.intro_screen       ; not reachable from mainloop
+    blitz
 .playing
 .level_completed
     bra.b   .mainloop
@@ -376,13 +385,14 @@ Start:
     ; quit
     bsr     restore_interrupts
 			      
-
+    lea _custom,a5
     move.l  gfxbase,a1
     move.l  gfxbase_copperlist,StartList(a1) ; adresse du début de la liste
     move.l  gfxbase_copperlist,cop1lc(a5) ; adresse du début de la liste
     clr.w  copjmp1(a5)
     ;;move.w #$8060,dmacon(a5)        ; réinitialisation du canal DMA
     
+    move.l  4.W,A6
     move.l  gfxbase,a1
     jsr _LVOCloseLibrary(a6)
     
@@ -453,7 +463,28 @@ init_level:
     move.l  a1,global_speed_table
     
     rts
- 
+
+draw_score:
+    lea	screen_data+SCREEN_PLANE_SIZE*3,a1  ; white
+    lea p1_string(pc),a0
+    move.w  #232,d0
+    move.w  #16,d1
+    bsr write_string
+    lea score_string(pc),a0
+    move.w  #232,d0
+    add.w  #8,d1
+    bsr write_string
+    
+    lea high_score_string(pc),a0
+    move.w  #232,d0
+    move.w  #48,d1
+    bsr write_string
+    lea score_string(pc),a0
+    move.w  #232,d0
+    add.w  #8,d1
+    bsr write_string
+    rts
+    
 hide_sprites:
     move.w  #7,d1
     lea  sprites,a0
@@ -1072,10 +1103,15 @@ draw_ghosts:
      
 draw_all
     DEF_STATE_CASE_TABLE
+
+; draw intro screen
+.intro_screen
+    bra.b   draw_intro_screen
     
 .level_completed
 .life_lost
 .next_level
+
     ; don't do anything
     rts
     
@@ -1283,6 +1319,119 @@ random:
     move.l  d0,previous_random
     rts
 
+X_TEXT = 40
+Y_TEXT = 24
+GHOST_DESC_HEIGHT = 24
+
+X_DOT = 120
+Y_DOT = 200
+
+DRAW_GHOST_INFO:MACRO
+    cmp.w   #NB_TICKS_PER_SEC*(\2*3+1),intro_timer
+    bne.b   .no_show_\1
+    moveq.l #\2,d0
+    bra.b .draw_ghost_bob
+.no_show_\1
+    cmp.w   #NB_TICKS_PER_SEC*(\2*3+2),intro_timer
+    bne.b   .no_show_\1_text
+    moveq.l #\2,d0
+    bsr .draw_ghost_text
+    move.w  d0,.nb_written
+    rts
+.no_show_\1_text
+    cmp.w   #NB_TICKS_PER_SEC*(\2*3+2)+(NB_TICKS_PER_SEC/2)+1,intro_timer
+    bne.b   .no_show_\1_text_2
+    moveq.l #\2,d0
+    bra .draw_ghost_text
+.no_show_\1_text_2
+    ENDM
+    
+draw_intro_screen
+    tst.w   intro_timer
+    bne.b   .no_first
+    lea character_nickname_string(pc),a0
+    move.w  #X_TEXT,d0
+    move.w  #10,d1
+    move.w  #$fff,d2
+    bra.b write_color_string
+.no_first
+    
+    DRAW_GHOST_INFO red,0
+    DRAW_GHOST_INFO pink,1
+    DRAW_GHOST_INFO cyan,2
+    DRAW_GHOST_INFO orange,3
+
+    lea	screen_data+DOT_PLANE_OFFSET+X_DOT/8+Y_DOT*NB_BYTES_PER_LINE,a1
+    bsr draw_dot
+    move.w  #X_DOT+16,d0
+    move.w  #Y_DOT,d1
+    lea     ten_pts_string(pc),a0
+    move.w  #$FFF,d2
+    bsr write_color_string
+    
+    lea	screen_data+DOT_PLANE_OFFSET+X_DOT/8+(Y_DOT+16)*NB_BYTES_PER_LINE,a1
+    bsr draw_power_dot
+    lea	screen_data+DOT_PLANE_OFFSET+X_TEXT/8+(Y_TEXT+4*GHOST_DESC_HEIGHT+16)*NB_BYTES_PER_LINE,a1
+    bsr draw_power_dot
+    move.w  #X_DOT+16,d0
+    move.w  #Y_DOT+16,d1
+    lea     fifty_pts_string(pc),a0
+    move.w  #$FFF,d2
+    bsr write_color_string
+    
+    ; namco logo
+    lea namco,a0
+    lea screen_data,a1
+    move.w  #100,d0
+    move.w  #240,d1
+    move.w  #10,d2
+    moveq.l #-1,d3
+    bsr blit_plane_any
+    lea screen_data+3*SCREEN_PLANE_SIZE,a1
+    move.w  #100,d0
+    move.w  #240,d1
+    bsr blit_plane_any
+    
+    rts
+    
+.nb_written
+    dc.w    0
+    
+.draw_ghost_bob
+    lea ghost_bob_table,a1
+    move.w  d0,d3
+    move.w  d0,d2
+    add.w   d2,d2
+    add.w   d2,d2
+    move.l  (a1,d2.w),a0    ; ghost bob    
+    move.w  #X_TEXT-24,d0
+    move.w  #Y_TEXT,d1
+    mulu.w  #GHOST_DESC_HEIGHT,d3
+    add.w   d3,d1
+    
+    bra blit_4_planes
+    
+.draw_ghost_text
+    lea character_text_table(pc),a0
+    move.w  d0,d3
+    move.w  d0,d4
+    lsl.w   #4,d3
+    lea  (a0,d3.w),a0    ; text table
+    move.l  (8,a0),d2   ; color
+    move.w  .nb_written(pc),d0
+    beq.b   .no_text_2
+    addq.l  #4,a0
+.no_text_2
+    clr.w   .nb_written
+    lsl.w   #3,d0
+    add.w  #X_TEXT+8,d0
+    move.w  #Y_TEXT+4,d1
+    move.l  (a0),a0 ; text
+    mulu.w  #GHOST_DESC_HEIGHT,d4
+    add.w   d4,d1
+
+    bra write_color_string
+    
 ; < D0: 0,1,2,... score index 100,300,500,700 ...
 
 draw_bonus_score:
@@ -1419,7 +1568,6 @@ draw_bonuses:
 
 draw_bonus
     movem.l d0-d3/a0-a1,-(a7)
-    lea	screen_data,a1
     cmp.w   #12,d2
     bcs.b   .ok
     move.w  #12,d2  ; maxed 
@@ -1523,8 +1671,7 @@ draw_dots:
     cmp.b   #1,d2
     ; draw small dot
     bne.b   .big
-    move.b  #%0011000,(NB_BYTES_PER_LINE*3,a1)
-    move.b  #%0011000,(NB_BYTES_PER_LINE*4,a1)
+    bsr draw_dot
     bra.b   .next
 .big
     move.l  a1,(a2)+        ; store powerdot address
@@ -1562,6 +1709,11 @@ clear_power_dot
     clr.b  (NB_BYTES_PER_LINE*7,a1)
     rts
 
+draw_dot:
+    move.b  #%0011000,(NB_BYTES_PER_LINE*3,a1)
+    move.b  #%0011000,(NB_BYTES_PER_LINE*4,a1)
+    rts
+    
 ; < A1 address
 clear_dot
     clr.b  (NB_BYTES_PER_LINE*3,a1)
@@ -1586,8 +1738,8 @@ init_interrupts
     lea _custom,a6
     jsr _mt_install_cia
     
-    move.w  (dmaconr,a5),saved_dmacon
-    move.w  (intenar,a5),saved_intena
+    move.w  (dmaconr,a6),saved_dmacon
+    move.w  (intenar,a6),saved_intena
     
     rts
     
@@ -1678,6 +1830,10 @@ mouse:
 update_all
     DEF_STATE_CASE_TABLE
 
+.intro_screen
+    add.w   #1,intro_timer
+    rts
+    
 .life_lost
     rts  ; bra update_power_dot_flashing
 
@@ -2988,14 +3144,14 @@ blith = 16
     and.w   #$1F0,d0
     lsr.w   #3,d0
     add.w   d0,d1
-    add.l   d1,a1       ; plane position
 
     swap    d3
     clr.w   d3
     lsl.l   #8,d3
     lsl.l   #4,d3
-    or.l   d3,d4            ; add shift
+    or.l    d3,d4            ; add shift
 .d0_zero    
+    add.l   d1,a1       ; plane position
 
 	move.w #NB_BYTES_PER_LINE,d0
     sub.w   d2,d0       ; blit width
@@ -3018,16 +3174,16 @@ blith = 16
 	move.w  d3,bltsize(a5)	;rectangle size, starts blit
     rts
 
-; what: blits 16(32)x16 data on 4 planes (for bonuses)
+; what: blits 16(32)x16 data on 4 planes (for bonuses), full mask
 ; args:
 ; < A0: data (16x16)
-; < A1: plane
 ; < D0: X
 ; < D1: Y
 ; trashes: D0-D1
 
 blit_4_planes
     movem.l d2/d4-d5/a0-a1/a5,-(a7)
+    lea     screen_data,a1
     moveq.l #3,d5
 .loop
     movem.l d0-d1/a1,-(a7)
@@ -3224,7 +3380,7 @@ write_color_string
 ; > D0: number of characters written
 ; trashes: none
 
-write_string
+write_string:
     movem.l A0-A2/d1-D2,-(a7)
     clr.w   d2
     ADD_XY_TO_A1    a2
@@ -3233,20 +3389,9 @@ write_string
     move.b  (a0)+,d2
     beq.b   .end
     addq.l  #1,d0
-    cmp.b   #'!',d2
-    bne.b   .noexcl
-    lea exclamation(pc),a2
-    moveq.l #0,d2
-    bra.b   .wl
-.noexcl
-    cmp.b   #' ',d2
-    bne.b   .nospace
-    lea space(pc),a2
-    moveq.l #0,d2
-    bra.b   .wl
-.nospace
+
     cmp.b   #'0',d2
-    bcs.b   .next
+    bcs.b   .special
     cmp.b   #'9'+1,d2
     bcc.b   .try_letters
     ; digits
@@ -3256,13 +3401,11 @@ write_string
     
 .try_letters: 
     cmp.b   #'A',d2
-    bcs.b   .next
+    bcs.b   .special
     cmp.b   #'Z'+1,d2
-    bcc.b   .next
+    bcc.b   .special
     lea letters(pc),a2
     sub.b   #'A',d2
-    bra.b   .wl
-    bra.b   .next
 .wl
     lsl.w   #3,d2   ; *8
     add.w   d2,a2
@@ -3274,6 +3417,64 @@ write_string
     move.b  (a2)+,(NB_BYTES_PER_LINE*5,a1)
     move.b  (a2)+,(NB_BYTES_PER_LINE*6,a1)
     move.b  (a2)+,(NB_BYTES_PER_LINE*7,a1)
+    bra.b   .next
+.special
+    cmp.b   #' ',d2
+    bne.b   .nospace
+    lea space(pc),a2
+    moveq.l #0,d2
+    bra.b   .wl
+.nospace    
+    cmp.b   #'!',d2
+    bne.b   .noexcl
+    lea exclamation(pc),a2
+    moveq.l #0,d2
+    bra.b   .wl
+.noexcl
+    cmp.b   #'/',d2
+    bne.b   .noslash
+    lea slash(pc),a2
+    moveq.l #0,d2
+    bra.b   .wl
+.noslash
+    cmp.b   #'-',d2
+    bne.b   .nodash
+    lea dash(pc),a2
+    moveq.l #0,d2
+    bra.b   .wl
+.nodash
+    cmp.b   #'"',d2
+    bne.b   .noquote
+    lea quote(pc),a2
+    moveq.l #0,d2
+    bra.b   .wl
+.noquote
+    cmp.b   #'c',d2
+    bne.b   .nocopy
+    lea copyright(pc),a2
+    moveq.l #0,d2
+    bra.b   .wl
+.nocopy
+    cmp.b   #'p',d2
+    bne.b   .nop
+    lea pts_0(pc),a2
+    moveq.l #0,d2
+    bra.b   .wl
+.nop
+    cmp.b   #'t',d2
+    bne.b   .nop2
+    lea pts_1(pc),a2
+    moveq.l #0,d2
+    bra.b   .wl
+.nop2
+    cmp.b   #'s',d2
+    bne.b   .nop3
+    lea pts_2(pc),a2
+    moveq.l #0,d2
+    bra.b   .wl
+.nop3
+
+
 .next   
     addq.l  #1,a1
     bra.b   .loop
@@ -3310,7 +3511,9 @@ bonus_level_table:
     dc.w    0,1,2,2,3,3,4,4,5,5,6,6,7
 bonus_level_score:  ; *10
     dc.w    10,30,50,50,70,70,100,100,200,200,300,300,500
-bonus_timer
+bonus_timer:
+    dc.w    0
+intro_timer:
     dc.w    0
 fruit_score_index:
     dc.w    0
@@ -3478,6 +3681,22 @@ letters
     incbin	"Z.bin"    
 exclamation
     incbin  "exclamation.bin"
+slash
+    incbin  "slash.bin"
+dash
+    incbin  "dash.bin"
+quote
+    incbin  "quote.bin"
+copyright
+    incbin  "copyright.bin"
+pts_0
+    incbin  "pts_0.bin"
+pts_1
+    incbin  "pts_1.bin"
+pts_2
+    incbin  "pts_2.bin"
+namco:
+    incbin  "namco.bin"
 space
     ds.b    8,0
     
@@ -3491,6 +3710,35 @@ game_over_string
     dc.b    "GAME  OVER",0
 ready_string
     dc.b    "READY!",0
+character_nickname_string:
+    dc.b    "CHARACTER / NICKNAME",0
+
+fifty_pts_string:
+    dc.b    "50 pts",0
+ten_pts_string:
+    dc.b    "10 pts",0
+character_text_table
+    dc.l    oiake,akabei,$F00,0
+    dc.l    machibuse,pinky,$0fbf,0
+    dc.l    kimagure,aosuke,$00ff,0
+    dc.l    otobuke,guzuta,$0fb5,0
+oiake:
+    dc.b    "OIKAKE----",0
+akabei:
+    dc.b    '"AKABEI"',0
+machibuse:
+    dc.b    "MACHIBUSE--",0
+pinky:
+    dc.b    '"PINKY"',0
+kimagure:
+    dc.b    "KIMAGURE--",0
+aosuke:
+    dc.b    '"AOSUKE"',0
+otobuke:
+    dc.b    "OTOBUKE---",0
+guzuta:
+    dc.b    '"GUZUTA"',0
+
     even
 
     MUL_TABLE   40
@@ -3522,7 +3770,7 @@ no_direction_choice_table:
     ; 4 words: total number of frames for fright mode,
     ;          number of frames to start flashing
 DEF_FRIGHT_ENTRY:MACRO
-    dc.w    NB_TICKS_PER_SEC*\1,NB_FLASH_FRAMES*\2*2
+    dc.w    ORIGINAL_TICKS_PER_SEC*\1,NB_FLASH_FRAMES*\2*2
     ENDM
     
 fright_table
@@ -3948,7 +4196,13 @@ end_color_copper:
 screen_data:
     ds.b    SCREEN_PLANE_SIZE*NB_PLANES+NB_BYTES_PER_LINE,0
 	
-    
+ghost_bob_table:
+    dc.l    .ghost_bobs,.ghost_bobs+320,.ghost_bobs+320*2,.ghost_bobs+320*3
+.ghost_bobs:
+    incbin  "red_ghost_bob.bin"
+    incbin  "pink_ghost_bob.bin"
+    incbin  "cyan_ghost_bob.bin"
+    incbin  "orange_ghost_bob.bin"
     
 pac_left_0
     incbin  "pac_left_0.bin"
@@ -3982,7 +4236,7 @@ pac_dead
     incbin  "pac_dead_11.bin"
     ds.b    64,0        ; empty frame
 pac_lives
-    incbin  "pac_lives_0.bin"
+    incbin  "pac_lives.bin"
 bonus_pics:
     incbin  "cherry.bin"
     incbin  "strawberry.bin"

@@ -71,7 +71,8 @@ def process_tiles():
         height = object.get("height",default_height)
 
 
-        for i in range(object["frames"]):
+        nb_frames = object["frames"]
+        for i in range(nb_frames):
             if horizontal:
                 x = i*width+start_x
                 y = start_y
@@ -81,7 +82,10 @@ def process_tiles():
 
             area = (x, y, x + width, y + height)
             cropped_img = sprites.crop(area)
-            cropped_name = os.path.join(outdir,"{}_{}.png".format(name,i))
+            if nb_frames == 1:
+                cropped_name = os.path.join(outdir,"{}.png".format(name))
+            else:
+                cropped_name = os.path.join(outdir,"{}_{}.png".format(name,i))
             cropped_img.save(cropped_name)
 
             # save
@@ -97,7 +101,8 @@ def process_tiles():
                 else:
                     sprite_palette_offset = 16+(sprite_number//2)*4
                     sprite_palette = game_palette[sprite_palette_offset:sprite_palette_offset+4]
-                bitplanelib.palette_image2sprite(cropped_img,"../{}/{}_{}.bin".format(sprites_dir,name,i),
+                bin_base = "../{}/{}_{}.bin".format(sprites_dir,name,i) if nb_frames != 1 else "../{}/{}.bin".format(sprites_dir,name)
+                bitplanelib.palette_image2sprite(cropped_img,bin_base,
                     sprite_palette,palette_precision_mask=0xF0)
             else:
                 # blitter object
@@ -112,7 +117,8 @@ def process_tiles():
                 # if 1 plane, pacman frames, save only 1 plane, else save all 4 planes
                 used_palette = p if len(p)==2 else game_palette
 
-                namei = "{}_{}".format(name,i)
+                namei = "{}_{}".format(name,i) if nb_frames!=1 else name
+
                 bitplanelib.palette_image2raw(img,"../{}/{}.bin".format(sprites_dir,name_dict.get(namei,namei)),used_palette,palette_precision_mask=0xF0)
 
 def process_fonts():
@@ -137,6 +143,9 @@ def process_fonts():
     name_dict.update({"letter_row_1_{}".format(i):chr(ord('P')+i) for i in range(0,11)})
     name_dict["letter_row_1_11"] = "exclamation"
     name_dict.update({"digit_row_0_{}".format(i):chr(ord('0')+i) for i in range(0,10)})
+    name_dict["digit_row_0_10"] = "slash"
+    name_dict["digit_row_0_11"] = "dash"
+    name_dict["digit_row_0_12"] = "quote"
     # we first did that to get the palette but we need to control
     # the order of the palette
 
@@ -152,8 +161,8 @@ def process_fonts():
         width = object.get("width",default_width)
         height = object.get("height",default_height)
 
-
-        for i in range(object["frames"]):
+        nb_frames = object["frames"]
+        for i in range(nb_frames):
             if horizontal:
                 x = i*width+start_x
                 y = start_y
@@ -163,7 +172,8 @@ def process_fonts():
 
             area = (x, y, x + width, y + height)
             cropped_img = sprites.crop(area)
-            cropped_name = os.path.join(outdir,"{}_{}.png".format(name,i))
+            bn = "{}_{}.png".format(name,i) if nb_frames != 1 else name+".png"
+            cropped_name = os.path.join(outdir,bn)
             cropped_img.save(cropped_name)
 
             # save
@@ -174,13 +184,14 @@ def process_fonts():
                 raise Exception("{} (frame #{}) with should be a multiple of 8, found {}".format(name,i,x_size))
             # pacman is special: 1 plane
             p = bitplanelib.palette_extract(cropped_img,palette_precision_mask=0xF0)
-            # add 16 pixels
-            img = Image.new("RGB",(x_size,cropped_img.size[1]))
+            # add 16 pixels if multiple of 16 (bob)
+            img_x = x_size+16 if x_size%16==0 else x_size
+            img = Image.new("RGB",(img_x,cropped_img.size[1]))
             img.paste(cropped_img)
             # if 1 plane, pacman frames, save only 1 plane, else save all 4 planes
             used_palette = p if len(p)==2 else game_palette
 
-            namei = "{}_{}".format(name,i)
+            namei = "{}_{}".format(name,i) if nb_frames != 1 else name
             bitplanelib.palette_image2raw(img,"../{}/{}.bin".format(sprites_dir,name_dict.get(namei,namei)),used_palette,palette_precision_mask=0xF0)
 
 process_tiles()

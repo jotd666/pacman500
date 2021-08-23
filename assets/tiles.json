@@ -73,22 +73,30 @@
    "start_y":80
   },
 {
-   "ignore" : true,
-   "name":"pink_ghost",
-   "sprite_number":2,
-   "frames":8,
+   "name":"red_ghost_bob",
+   "frames":1,
+   "start_x":0,
+   "start_y":64
+  },
+{
+   "name":"pink_ghost_bob",
+   "frames":1,
    "start_x":0,
    "start_y":80
   },
   {
-   "ignore" : true,
-   "name":"cyan_ghost",
-   "sprite_number":4,
-   "frames":8,
+   "name":"cyan_ghost_bob",
+   "frames":1,
    "start_x":0,
    "start_y":96
   },
    {
+  "name":"orange_ghost_bob",
+   "frames":1,
+   "start_x":0,
+   "start_y":112
+  },
+    {
   "name":"scores",
    "sprite_number":5,
    "frames":4,
@@ -101,14 +109,7 @@
    "start_x":0,
    "start_y":144
  },
-  {
-    "ignore" : true,
-  "name":"orange_ghost",
-   "sprite_number":6,
-   "frames":8,
-   "start_x":0,
-   "start_y":112
-  },
+
 
  {
    "name":"bonus",
