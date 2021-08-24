@@ -1,28 +1,26 @@
 bugs:
 
 - pac too fast when taking power pill at some point (down/up)
+  maybe resulting in missing some dots. Debug mode? redraw all dots in another plane???
 - leaving a few pixels behind
 - ghosts show where they're going too late (missing one tile?)
 - fruit/ready not reset when life is lost
-- blinking power dots freq problem
-- 2 cyan ghosts at some point
-- test ghosts targets
+- 2 cyan ghosts at some point because of score color 200+400? always reset ghost palettes after score display
+- test / display ghosts targets with extra sprite (except red)
 - cookie cut for bonuses ou autre solution???
-- elroy debug!!
+- elroy debug!! seems reverted: in the end infinite scatter for red
 - remove bonus doesn't work well
-- score for bonus doesn't disappear
+- score for bonus doesn't disappear: ??? pas vrai?
 
 random bugs:
 
 - pacman corruption left/upper
 - to right: pacman trashed mem corruption???
-- 241 dots eaten: no level end: happened 2 times
 - score goes berzerk
 
 todo:
 
 - end of level: clear screen (pacman pos)
-- bonus score (blit, another plane, maybe hack palette so bonus+yellow = yellow)
 - black tunnel mask
 - leave pen behaviour after a life is lost
 - elroy behaviour after a life is lost

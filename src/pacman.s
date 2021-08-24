@@ -157,7 +157,7 @@ BONUS_Y_POS = RED_YSTART_POS+16
 BONUS_OFFSET = $28F  ;(NB_TILES_PER_LINE*20)+14
 BONUS_TIMER_VALUE = NB_TICKS_PER_SEC*10     ; ORIGINAL_TICKS_PER_SEC?
 BONUS_SCORE_TIMER_VALUE = NB_TICKS_PER_SEC*2     ; ORIGINAL_TICKS_PER_SEC?
-BLINK_RATE = 2*(NB_TICKS_PER_SEC/5) ; for powerdots
+BLINK_RATE = ORIGINAL_TICKS_PER_SEC/2 ; for powerdots
 PREPOST_TURN_LOCK = 4
 
 DOT_PLANE_OFFSET = SCREEN_PLANE_SIZE*2-(X_START/8)
@@ -187,6 +187,7 @@ STATE_LEVEL_COMPLETED = 2*4
 STATE_NEXT_LEVEL = 3*4
 STATE_LIFE_LOST = 4*4
 STATE_INTRO_SCREEN = 5*4
+STATE_GAME_START_SCREEN = 6*4
 
 ; jump table macro, used in draw and update
 DEF_STATE_CASE_TABLE:MACRO
@@ -202,6 +203,7 @@ DEF_STATE_CASE_TABLE:MACRO
     dc.l    .next_level
     dc.l    .life_lost
     dc.l    .intro_screen
+    dc.l    .game_start_screen
     ENDM
     
 ; write current PC value to some address
@@ -319,11 +321,28 @@ Start:
     move.w #$C038,intena(a5)
     
 .intro_loop
+    cmp.w   #STATE_INTRO_SCREEN,current_state
+    bne.b   .out_intro
     move.l  joystick_state(pc),d0
     btst    #6,$BFE001
     beq.b   .restart
     btst    #JPB_BTN_RED,d0
     beq.b   .intro_loop
+.out_intro    
+    clr.w   intro_timer
+    move.w  #STATE_GAME_START_SCREEN,current_state
+.release
+    move.l  joystick_state(pc),d0
+    btst    #JPB_BTN_RED,d0
+    bne.b   .release
+
+.game_start_loop
+    move.l  joystick_state(pc),d0
+    btst    #6,$BFE001
+    beq.b   .restart
+    btst    #JPB_BTN_RED,d0
+    beq.b   .game_start_loop
+
     
 .restart    
     lea _custom,a5
@@ -370,6 +389,7 @@ Start:
     beq.b   .out
     DEF_STATE_CASE_TABLE
     
+.game_start_screen
 .intro_screen       ; not reachable from mainloop
     blitz
 .playing
@@ -827,6 +847,7 @@ init_player
     clr.l   previous_random
     move.w  #-1,player_killed_timer
     move.w  #-1,ghost_eaten_timer
+    clr.w   next_ghost_score
     move.l  screen_data+2*NB_BYTES_PER_LINE+SCREEN_PLANE_SIZE,previous_pacman_address  ; valid address for first clear
 	rts	    
 
@@ -1119,6 +1140,11 @@ draw_all
 .intro_screen
     bra.b   draw_intro_screen
     
+.game_start_screen
+    tst.w   intro_timer
+    beq.b   draw_start_screen
+    rts
+    
 .level_completed
 .life_lost
 .next_level
@@ -1226,9 +1252,10 @@ draw_all
 .draw_complete
     rts
 
-animate_power_dots    
+animate_power_dots
     move.w  power_dot_timer(pc),d0
-    bne.b   .nospd
+    cmp.w   #1,d0
+    bcc.b   .nospd
     lea  powerdots(pc),a0
     moveq.l #3,d0
 .drawpdloop
@@ -1240,8 +1267,13 @@ animate_power_dots
     dbf d0,.drawpdloop
     bra.b   .powerdot_done
 .nospd
+    cmp.w   #BLINK_RATE/2+2,d0
+    beq.b   .toggle
+    cmp.w   #BLINK_RATE/2+1,d0
+    beq.b   .toggle
     cmp.w   #BLINK_RATE/2,d0
     bne.b   .powerdot_done
+.toggle
     lea  powerdots(pc),a0
     moveq.l #3,d0
 .clrpdloop
@@ -1294,6 +1326,55 @@ DRAW_GHOST_INFO:MACRO
 .no_show_\1_text_2
     ENDM
     
+draw_start_screen
+    bsr hide_sprites
+    bsr clear_screen
+    lea .psb_string(pc),a0
+    move.w  #48,d0
+    move.w  #100,d1
+    move.w  #$0fb5,d2
+    bsr write_color_string
+    lea .opo_string(pc),a0
+    move.w  #48+16,d0
+    move.w  #136,d1
+    move.w  #$00ff,d2
+    bsr write_color_string
+    lea .bp1_string(pc),a0
+    move.w  #16,d0
+    move.w  #172,d1
+    move.w  #$FBB,d2
+    bsr write_color_string
+    
+    ; namco logo
+    lea namco,a0
+    lea screen_data,a1
+    move.w  #48+16+16,d0
+    move.w  #172+36,d1
+    move.w  #10,d2
+    moveq.l #-1,d3
+    move.w  #8,d4
+    bsr blit_plane_any
+    lea screen_data+3*SCREEN_PLANE_SIZE,a1
+    move.w  #48+16+16,d0
+    move.w  #172+36,d1
+    bsr blit_plane_any
+    
+    lea .namco_string(pc),a0
+    move.w  #48+16,d0
+    move.w  #172+36,d1
+    move.w  #$0fbf,d2
+    bsr write_color_string
+    
+    rts
+.psb_string
+    dc.b    "PUSH START BUTTON",0
+.opo_string:
+    dc.b    "1 PLAYER ONLY",0
+.bp1_string
+    dc.b    "BONUS PACMAN FOR 10000 pts",0
+.namco_string
+    dc.b    "c###########1980",0
+    even
 draw_intro_screen
     tst.w   intro_timer
     bne.b   .no_first
@@ -1798,7 +1879,12 @@ update_all
 .intro_screen
     bra update_intro_screen
     
-
+.game_start_screen
+    tst.w   intro_timer
+    bne.b   .out
+    add.w   #1,intro_timer
+.out    
+    rts
     
 .life_lost
     rts  ; bra update_power_dot_flashing
@@ -1903,6 +1989,7 @@ check_pac_ghosts_collisions
     rts
     
 .pac_eats_ghost:
+a_ghost_was_eaten:
     move.w  #MODE_EYES,mode(a4)
     ; test display score with the proper color (reusing pink sprite palette)
     move.w  #GHOST_KILL_TIMER,ghost_eaten_timer
@@ -1922,8 +2009,22 @@ check_pac_ghosts_collisions
     rts
 update_intro_screen
     add.w   #1,intro_timer
+    cmp.w   #4,next_ghost_score
+    bne.b   .remaining_ghosts
+    ; wait a while and go in press button to start game
+    move.w  intro_timer(pc),d1
+    sub.w   last_ghost_eaten_intro_timer(pc),d1
+    cmp.w   #NB_TICKS_PER_SEC,d1
+    bcs.b   .wait
+    ; change state
+    clr.w   intro_timer
+    move.w  #STATE_GAME_START_SCREEN,current_state
+.wait
+    rts
+.remaining_ghosts
     cmp.w   #DEMO_PACMAN_TIMER,intro_timer
     bne.b   .no_pac_demo_anim_init
+    clr.w   .skip_3_frames
     bsr init_player
     bsr init_ghosts
     lea player(pc),a2
@@ -1947,16 +2048,22 @@ update_intro_screen
     bcs.b   .no_pac_demo_anim
     
     bsr update_power_dot_flashing
+    move.w  ghost_eaten_timer(pc),d6
+    bmi.b   .update_pac_and_ghosts
+    subq.w  #1,d6
+    move.w  d6,ghost_eaten_timer
+    bra.b   .no_pac_demo_anim
     
+.update_pac_and_ghosts    
     lea     player(pc),a4
     lea     ghosts(pc),a3
     move.w  h_speed(a4),d0      ; speed
-    move.w  h_speed(a4),d1      ; speed
+    move.w  h_speed(a3),d1      ; speed
     add.w   #1,.move_period
 
     move.w  .move_period(pc),d5
-    cmp.w   #RIGHT,direction(a4)
-    bne.b   .ghost_attack
+    cmp.w   #-1,h_speed(a3)
+    beq.b   .ghost_attack
     move.w  d5,d6
     and.w   #1,d6
     bne.b   .ghost_attack
@@ -1966,7 +2073,7 @@ update_intro_screen
     cmp.w   #16,d5
     bne.b   .no_move_reset
     clr.w   .move_period
-    cmp.w   #LEFT,direction(a4)
+    cmp.w   #-1,h_speed(a3)
     bne.b   .ghosts_slow
     ; pacman doesn't move this time
     clr.w   d0
@@ -1982,30 +2089,61 @@ update_intro_screen
     bsr animate_pacman
     
 .no_pac_anim
+    tst.w   d1
+    beq.b   .no_ghost_anim
+    moveq.w #3,d7
+.ganim
+    ; update ghost animations but don't move
     ; apply speed on ghosts
     add.w   d1,(xpos,a3)
-    add.w   d1,(xpos+Ghost_SIZEOF,a3)
-    add.w   d1,(xpos+Ghost_SIZEOF*2,a3)
-    add.w   d1,(xpos+Ghost_SIZEOF*3,a3)
+    move.w  frame(a3),d2
+    addq.w  #1,d2
+    and.w   #$F,d2
+    move.w  d2,frame(a3)
+    add.w   #Ghost_SIZEOF,a3
+    dbf d7,.ganim
+.no_ghost_anim
+    ; check if pacman is stopped
+    tst.w   .skip_3_frames
+    beq.b   .okmove
+    subq.w  #1,.skip_3_frames
+    moveq   #0,d0
+.okmove
     move.w  (xpos,a4),d2
     add.w   d0,d2 ; pac
     cmp.w   #LEFT,direction(a4)
     bne.b   .pacman_chasing
-    
+
+    lea ghosts(pc),a3
+    cmp.w   #1,h_speed(a3)
+    beq.b   .storex ; powerpill taken already
     cmp.w   #X_DEMO_POWER_DOT+8,d2
     bne.b   .storex
-    ; eat dot & turn around
+    ; eat dot, don't turn around immediately
+    move.w  #3,.skip_3_frames
     lea  powerdots(pc),a0
     tst.l   (a0)
-    bne.b   .noclr
+    beq.b   .noclr
     move.l  (a0),a1
     clr.l   (a0)
     bsr clear_power_dot
 .noclr
+    
+    lea ghosts(pc),a3
+    move.w  #3,d7
+.floop
+    move.l  color_register(a3),a1
+    lea     frightened_ghosts_blue_palette(pc),a2
+    ; directly change color registers for that sprite
+    move.l  (a2)+,(a1)+
+    move.l  (a2)+,(a1)+
+    move.w  #MODE_FRIGHT,mode(a3)
+    move.w  #1,h_speed(a3)
+    add.l   #Ghost_SIZEOF,a3
+    dbf d7,.floop
   
+    lea ghosts(pc),a3
     move.w  #RIGHT,d3
-    move.w  #1,h_speed(a4)
-    move.w  d3,direction(a4)
     move.w  d3,(direction,a3)
     move.w  d3,(direction+Ghost_SIZEOF,a3)
     move.w  d3,(direction+Ghost_SIZEOF*2,a3)
@@ -2013,15 +2151,40 @@ update_intro_screen
     
     bra.b   .storex
 .pacman_chasing
-    cmp.w   #240,d2
-    bne.b   .storex
-    blitz
+    ; check collisions
+    move.w  d2,d3
+    lsr.w   #3,d3
+    moveq.w #3,d7
+    
+.cloop
+    cmp.w   #MODE_EYES,mode(a3)
+    beq.b   .no_eat
 
-.storex 
+    move.w  xpos(a3),d4
+    lsr.w   #3,d4
+    cmp.w   d4,d3
+    bne.b   .no_eat
+    move.w  #MODE_EYES,mode(a3)
+    move.w  #X_MAX*2,xpos(a3)   ; hidden
+    bsr a_ghost_was_eaten
+    move.w  intro_timer,last_ghost_eaten_intro_timer
+    bra.b   .storex
+.no_eat
+    add.w   #Ghost_SIZEOF,a3
+    dbf d7,.cloop
+.storex
+    cmp.w   #X_DEMO_POWER_DOT+4,d2
+    bcc.b  .storex2
+    ; turn around now
+    move.w  #1,h_speed(a4)
+    move.w  #RIGHT,direction(a4)
+    
+.storex2
     move.w  d2,(xpos,a4)
 .no_pac_demo_anim
     rts
-    
+.skip_3_frames
+    dc.w    0
 .move_period
     dc.w    0
     
@@ -3668,6 +3831,8 @@ bonus_level_score:  ; *10
 bonus_timer:
     dc.w    0
 intro_timer:
+    dc.w    0
+last_ghost_eaten_intro_timer
     dc.w    0
 fruit_score_index:
     dc.w    0
