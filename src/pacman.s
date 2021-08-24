@@ -141,6 +141,7 @@ NB_FLASH_FRAMES = 14
 PLAYER_KILL_TIMER = NB_TICKS_PER_SEC+NB_TICKS_PER_SEC/2+(NB_TICKS_PER_SEC/8)*9+NB_TICKS_PER_SEC/4+NB_TICKS_PER_SEC
 GHOST_KILL_TIMER = (NB_TICKS_PER_SEC*5)/6
 
+DEMO_PACMAN_TIMER = 20  ; TEMP!!!
     
 X_START = 16
 Y_START = 24
@@ -319,6 +320,8 @@ Start:
     
 .intro_loop
     move.l  joystick_state(pc),d0
+    btst    #6,$BFE001
+    beq.b   .restart
     btst    #JPB_BTN_RED,d0
     beq.b   .intro_loop
     
@@ -360,6 +363,7 @@ Start:
     bsr init_ghosts
     bsr init_player
     bsr draw_lives
+    move.w  #STATE_PLAYING,current_state
     move.w #$C038,intena(a5)
 .mainloop
     btst    #6,$bfe001
@@ -807,7 +811,7 @@ update_ghost_mode_timer
     
 init_player
     clr.w   bonus_clear_message
-
+    
     lea player(pc),a0
     move.l  #'PACM',character_id(a0)
 	move.w  #RED_XSTART_POS,xpos(a0)
@@ -822,7 +826,7 @@ init_player
     move.w  #50,ready_timer
     clr.l   previous_random
     move.w  #-1,player_killed_timer
-    move.w  #STATE_PLAYING,current_state
+    move.w  #-1,ghost_eaten_timer
     move.l  screen_data+2*NB_BYTES_PER_LINE+SCREEN_PLANE_SIZE,previous_pacman_address  ; valid address for first clear
 	rts	    
 
@@ -1025,11 +1029,18 @@ draw_ghosts:
     moveq.l #3,d7
 .gloop    
     move.w  xpos(a0),d0
+    ; too on the right, don't draw sprite
+    cmp.w   #X_MAX,d0
+    bcs.b   .do_display
+    moveq.l #0,d0
+    bra.b   .ssp
+.do_display    
     move.w  ypos(a0),d1
     ; center => top left
     sub.w  #8+X_START,d0
     sub.w  #4+Y_START,d1    ; not 8, because maybe table is off?
-    bsr store_sprite_pos    
+    bsr store_sprite_pos
+.ssp
     move.w  mode(a0),d3 ; scatter/chase/fright/return base
     cmp.w   #MODE_EYES,d3
     beq.b   .eyes
@@ -1140,108 +1151,14 @@ draw_all
     bsr write_color_string
     ;;bra.b   .draw_complete
 .ready_off
-    bsr   draw_ghosts
+    bsr draw_ghosts
 
-    lea player(pc),a2
-    ; draw_pacman
-    tst.w  ghost_eaten_timer
-    bmi.b   .normal_pacdraw
-    lea     pac_dead+64*12,a0       ; empty
-    bra.b   .pacblit
-.normal_pacdraw
-    tst.w  player_killed_timer
-    bmi.b   .normal
-    lea     pac_dead,a0
-    move.w  death_frame_offset(pc),d0
-    add.w   d0,a0       ; proper frame to blit
-    bra.b   .pacblit
-
-.normal    
-    move.w  direction(a2),d0
-    lea  pac_dir_table(pc),a0
-    move.l  (a0,d0.w),a0
-    move.w  frame(a2),d0
-    add.w   d0,d0
-    add.w   d0,d0
-    move.l  (a0,d0.w),a0
-.pacblit
-    lea	screen_data+SCREEN_PLANE_SIZE,a1
-    move.w  xpos(a2),d0
-    move.w  ypos(a2),d1
-    ; center => top left
-    moveq.l #-1,d2 ; mask
-    sub.w  #8+Y_START,d1
-    sub.w  #8+X_START,d0
-    bpl.b   .no_left
-    ; d0 is negative
-    neg.w   d0
-    lsr.l   d0,d2
-    neg.w   d0
-    add.w   #NB_BYTES_PER_LINE*8,d0
-    subq.w  #1,d1
-    bra.b   .pdraw
-.no_left
-    ; check mask to the right
-    move.w  d0,d4    
-    sub.w   #X_MAX-24-X_START,d4
-    bmi.b   .pdraw
-    lsl.l   d4,d2
-    swap    d2
-    clr.w   d2
-.pdraw
-    ; first roughly clear some pacman zones that can remain. We don't test the directions
-    ; just clear every possible pixel that could remain whatever the direction was/is
-    move.l  previous_pacman_address(pc),a3
-    clr.l   (a3)
-    clr.l   (NB_BYTES_PER_LINE,a3)
-    clr.l   (NB_BYTES_PER_LINE*2,a3)
-    clr.l   (NB_BYTES_PER_LINE*3,a3)
-    clr.l   (NB_BYTES_PER_LINE*5,a3)
-    clr.l   (NB_BYTES_PER_LINE*6,a3)
-    clr.l   (NB_BYTES_PER_LINE*7,a3)
-    clr.l   (NB_BYTES_PER_LINE*8,a3)
-    clr.l   (NB_BYTES_PER_LINE*9,a3)
-    clr.l   (NB_BYTES_PER_LINE*15,a3)
-    clr.l   (NB_BYTES_PER_LINE*16,a3)
-
-    bsr blit_plane
-    ; A1 is start of dest, use it to clear upper part and lower part
-    ; and possibly shifted to the left/right
-;;    move.l  a1,d0
-;;    btst    #0,d0
-;;    beq.b   .ok
-;;    subq.l  #1,a1   ; even address, always!
-;;.ok
-    move.l  a1,previous_pacman_address
-
+    bsr draw_pacman
     
     
     ; timer not running, animate
-    move.w  power_dot_timer(pc),d0
-    bne.b   .nospd
-    lea  powerdots(pc),a0
-    moveq.l #3,d0
-.drawpdloop
-    move.l  (a0)+,d1 
-    beq.b   .zap_draw
-    move.l  d1,a1
-    bsr draw_power_dot
-.zap_draw    
-    dbf d0,.drawpdloop
-    bra.b   .powerdot_done
-.nospd
-    cmp.w   #BLINK_RATE/2,d0
-    bne.b   .powerdot_done
-    lea  powerdots(pc),a0
-    moveq.l #3,d0
-.clrpdloop
-    move.l  (a0)+,d1
-    beq.b   .zap_clear
-    move.l  d1,a1
-    bsr clear_power_dot
-.zap_clear    
-    dbf d0,.clrpdloop
-.powerdot_done
+    bsr animate_power_dots
+
     cmp.w   #BONUS_SCORE_TIMER_VALUE,bonus_score_timer
     bne.b   .no_bonus_score_appear
     move.w  fruit_score_index(pc),d0
@@ -1309,6 +1226,34 @@ draw_all
 .draw_complete
     rts
 
+animate_power_dots    
+    move.w  power_dot_timer(pc),d0
+    bne.b   .nospd
+    lea  powerdots(pc),a0
+    moveq.l #3,d0
+.drawpdloop
+    move.l  (a0)+,d1 
+    beq.b   .zap_draw
+    move.l  d1,a1
+    bsr draw_power_dot
+.zap_draw    
+    dbf d0,.drawpdloop
+    bra.b   .powerdot_done
+.nospd
+    cmp.w   #BLINK_RATE/2,d0
+    bne.b   .powerdot_done
+    lea  powerdots(pc),a0
+    moveq.l #3,d0
+.clrpdloop
+    move.l  (a0)+,d1
+    beq.b   .zap_clear
+    move.l  d1,a1
+    bsr clear_power_dot
+.zap_clear    
+    dbf d0,.clrpdloop
+.powerdot_done
+    rts
+    
 random:
     move.l  previous_random(pc),d0
 	;;; EAB simple random generator
@@ -1319,12 +1264,15 @@ random:
     move.l  d0,previous_random
     rts
 
-X_TEXT = 40
-Y_TEXT = 24
+X_TEXT = 56
+Y_TEXT = 16
 GHOST_DESC_HEIGHT = 24
 
 X_DOT = 120
-Y_DOT = 200
+Y_DOT = 160
+
+Y_PAC_ANIM = 136
+X_DEMO_POWER_DOT = 48
 
 DRAW_GHOST_INFO:MACRO
     cmp.w   #NB_TICKS_PER_SEC*(\2*3+1),intro_timer
@@ -1351,7 +1299,7 @@ draw_intro_screen
     bne.b   .no_first
     lea character_nickname_string(pc),a0
     move.w  #X_TEXT,d0
-    move.w  #10,d1
+    move.w  #Y_TEXT,d1
     move.w  #$fff,d2
     bra.b write_color_string
 .no_first
@@ -1363,17 +1311,24 @@ draw_intro_screen
 
     lea	screen_data+DOT_PLANE_OFFSET+X_DOT/8+Y_DOT*NB_BYTES_PER_LINE,a1
     bsr draw_dot
-    move.w  #X_DOT+16,d0
+    move.w  #X_DOT,d0
     move.w  #Y_DOT,d1
     lea     ten_pts_string(pc),a0
     move.w  #$FFF,d2
     bsr write_color_string
+   
+    lea	screen_data+DOT_PLANE_OFFSET+X_DEMO_POWER_DOT/8+Y_PAC_ANIM*NB_BYTES_PER_LINE,a1
+    lea  powerdots(pc),a0
+    move.l  a1,(a0)+
+    bsr draw_power_dot
     
     lea	screen_data+DOT_PLANE_OFFSET+X_DOT/8+(Y_DOT+16)*NB_BYTES_PER_LINE,a1
+    move.l  a1,(a0)+
     bsr draw_power_dot
-    lea	screen_data+DOT_PLANE_OFFSET+X_TEXT/8+(Y_TEXT+4*GHOST_DESC_HEIGHT+16)*NB_BYTES_PER_LINE,a1
-    bsr draw_power_dot
-    move.w  #X_DOT+16,d0
+    ; 2 other power dots invalidated
+    clr.l   (a0)+
+    clr.l   (a0)+
+    move.w  #X_DOT,d0
     move.w  #Y_DOT+16,d1
     lea     fifty_pts_string(pc),a0
     move.w  #$FFF,d2
@@ -1382,16 +1337,25 @@ draw_intro_screen
     ; namco logo
     lea namco,a0
     lea screen_data,a1
-    move.w  #100,d0
-    move.w  #240,d1
+    move.w  #X_DOT,d0
+    move.w  #224,d1
     move.w  #10,d2
     moveq.l #-1,d3
+    move.w  #8,d4
     bsr blit_plane_any
     lea screen_data+3*SCREEN_PLANE_SIZE,a1
-    move.w  #100,d0
-    move.w  #240,d1
+    move.w  #X_DOT,d0
+    move.w  #224,d1
     bsr blit_plane_any
     
+    cmp.w   #DEMO_PACMAN_TIMER,intro_timer
+    bcs.b   .dont_draw_characs
+    ; blit pacman
+    bsr draw_ghosts
+    bsr draw_pacman
+    ; animate dots
+    bsr animate_power_dots
+.dont_draw_characs    
     rts
     
 .nb_written
@@ -1405,7 +1369,7 @@ draw_intro_screen
     add.w   d2,d2
     move.l  (a1,d2.w),a0    ; ghost bob    
     move.w  #X_TEXT-24,d0
-    move.w  #Y_TEXT,d1
+    move.w  #Y_TEXT+12,d1
     mulu.w  #GHOST_DESC_HEIGHT,d3
     add.w   d3,d1
     
@@ -1425,7 +1389,7 @@ draw_intro_screen
     clr.w   .nb_written
     lsl.w   #3,d0
     add.w  #X_TEXT+8,d0
-    move.w  #Y_TEXT+4,d1
+    move.w  #Y_TEXT+16,d1
     move.l  (a0),a0 ; text
     mulu.w  #GHOST_DESC_HEIGHT,d4
     add.w   d4,d1
@@ -1686,6 +1650,7 @@ draw_dots:
     rts
 
 ; < A1 address
+; trashes: none
 draw_power_dot
     move.b  #%00111100,(a1)
     move.b  #%01111110,(NB_BYTES_PER_LINE*1,a1)
@@ -1831,8 +1796,9 @@ update_all
     DEF_STATE_CASE_TABLE
 
 .intro_screen
-    add.w   #1,intro_timer
-    rts
+    bra update_intro_screen
+    
+
     
 .life_lost
     rts  ; bra update_power_dot_flashing
@@ -1954,7 +1920,111 @@ check_pac_ghosts_collisions
     
     ; exits as soon as a collision is found
     rts
+update_intro_screen
+    add.w   #1,intro_timer
+    cmp.w   #DEMO_PACMAN_TIMER,intro_timer
+    bne.b   .no_pac_demo_anim_init
+    bsr init_player
+    bsr init_ghosts
+    lea player(pc),a2
+    clr.w   .move_period
+    move.w  #X_MAX,xpos(a2)
+    move.w  #Y_PAC_ANIM+28,ypos(a2)
+    lea ghosts(pc),a3
+    moveq   #3,d0
+    moveq.w #0,d1
+.ginit
+    move.w  #X_MAX+24,xpos(a3)
+    add.w   d1,xpos(a3)
+    add.w   #16,d1
+    move.w  ypos(a2),ypos(a3)
+    move.w  #LEFT,direction(a3)
+    move.w  #-1,h_speed(a3)
+    add.l   #Ghost_SIZEOF,a3
+    dbf d0,.ginit
+.no_pac_demo_anim_init
+    cmp.w   #DEMO_PACMAN_TIMER,intro_timer
+    bcs.b   .no_pac_demo_anim
+    
+    bsr update_power_dot_flashing
+    
+    lea     player(pc),a4
+    lea     ghosts(pc),a3
+    move.w  h_speed(a4),d0      ; speed
+    move.w  h_speed(a4),d1      ; speed
+    add.w   #1,.move_period
 
+    move.w  .move_period(pc),d5
+    cmp.w   #RIGHT,direction(a4)
+    bne.b   .ghost_attack
+    move.w  d5,d6
+    and.w   #1,d6
+    bne.b   .ghost_attack
+    clr.w   d1  ; slower ghosts
+.ghost_attack
+    
+    cmp.w   #16,d5
+    bne.b   .no_move_reset
+    clr.w   .move_period
+    cmp.w   #LEFT,direction(a4)
+    bne.b   .ghosts_slow
+    ; pacman doesn't move this time
+    clr.w   d0
+    bra.b   .no_move_reset
+.ghosts_slow
+    ; ghosts don't move
+    ; pacman moves 1 more
+    addq.w  #1,d0
+    clr.w   d1
+.no_move_reset
+    tst.w   d0
+    beq.b   .no_pac_anim
+    bsr animate_pacman
+    
+.no_pac_anim
+    ; apply speed on ghosts
+    add.w   d1,(xpos,a3)
+    add.w   d1,(xpos+Ghost_SIZEOF,a3)
+    add.w   d1,(xpos+Ghost_SIZEOF*2,a3)
+    add.w   d1,(xpos+Ghost_SIZEOF*3,a3)
+    move.w  (xpos,a4),d2
+    add.w   d0,d2 ; pac
+    cmp.w   #LEFT,direction(a4)
+    bne.b   .pacman_chasing
+    
+    cmp.w   #X_DEMO_POWER_DOT+8,d2
+    bne.b   .storex
+    ; eat dot & turn around
+    lea  powerdots(pc),a0
+    tst.l   (a0)
+    bne.b   .noclr
+    move.l  (a0),a1
+    clr.l   (a0)
+    bsr clear_power_dot
+.noclr
+  
+    move.w  #RIGHT,d3
+    move.w  #1,h_speed(a4)
+    move.w  d3,direction(a4)
+    move.w  d3,(direction,a3)
+    move.w  d3,(direction+Ghost_SIZEOF,a3)
+    move.w  d3,(direction+Ghost_SIZEOF*2,a3)
+    move.w  d3,(direction+Ghost_SIZEOF*3,a3)
+    
+    bra.b   .storex
+.pacman_chasing
+    cmp.w   #240,d2
+    bne.b   .storex
+    blitz
+
+.storex 
+    move.w  d2,(xpos,a4)
+.no_pac_demo_anim
+    rts
+    
+.move_period
+    dc.w    0
+    
 update_ghosts:
     lea ghosts(pc),a4
     moveq.w #3,d7
@@ -2894,7 +2964,7 @@ update_pac
     move.w  d5,xpos(a4)
     move.w  d3,ypos(a4)
 
-    bsr .animate
+    bsr animate_pacman
     clr.w   h_speed(a4)
 .no_vmove
     rts
@@ -2954,14 +3024,15 @@ update_pac
 .setx
     move.w  d2,xpos(a4)
     move.w  d5,ypos(a4)
-    bsr .animate
+    bsr animate_pacman
     clr.w   v_speed(a4)
 
 .no_hmove
     rts
 
 ; called when pacman moves
-.animate
+; < A4: pac player
+animate_pacman
     addq.w  #1,frame(a4)
     cmp.w   #(pac_anim_left_end-pac_anim_left)/4,frame(a4)
     bne.b   .no_floop
@@ -2969,6 +3040,78 @@ update_pac
 .no_floop
     rts
 
+draw_pacman:
+    lea     player(pc),a2
+    tst.w  ghost_eaten_timer
+    bmi.b   .normal_pacdraw
+    lea     pac_dead+64*12,a0       ; empty
+    bra.b   .pacblit
+.normal_pacdraw
+    tst.w  player_killed_timer
+    bmi.b   .normal
+    lea     pac_dead,a0
+    move.w  death_frame_offset(pc),d0
+    add.w   d0,a0       ; proper frame to blit
+    bra.b   .pacblit
+
+.normal    
+    move.w  direction(a2),d0
+    lea  pac_dir_table(pc),a0
+    move.l  (a0,d0.w),a0
+    move.w  frame(a2),d0
+    add.w   d0,d0
+    add.w   d0,d0
+    move.l  (a0,d0.w),a0
+.pacblit
+    lea	screen_data+SCREEN_PLANE_SIZE,a1
+    move.w  xpos(a2),d0
+    move.w  ypos(a2),d1
+    ; center => top left
+    moveq.l #-1,d2 ; mask
+    sub.w  #8+Y_START,d1
+    sub.w  #8+X_START,d0
+    bpl.b   .no_left
+    ; d0 is negative
+    neg.w   d0
+    lsr.l   d0,d2
+    neg.w   d0
+    add.w   #NB_BYTES_PER_LINE*8,d0
+    subq.w  #1,d1
+    bra.b   .pdraw
+.no_left
+    ; check mask to the right
+    move.w  d0,d4    
+    sub.w   #X_MAX-24-X_START,d4
+    bmi.b   .pdraw
+    lsl.l   d4,d2
+    swap    d2
+    clr.w   d2
+.pdraw
+    ; first roughly clear some pacman zones that can remain. We don't test the directions
+    ; just clear every possible pixel that could remain whatever the direction was/is
+    move.l  previous_pacman_address(pc),a3
+    clr.l   (a3)
+    clr.l   (NB_BYTES_PER_LINE,a3)
+    clr.l   (NB_BYTES_PER_LINE*2,a3)
+    clr.l   (NB_BYTES_PER_LINE*3,a3)
+    clr.l   (NB_BYTES_PER_LINE*5,a3)
+    clr.l   (NB_BYTES_PER_LINE*6,a3)
+    clr.l   (NB_BYTES_PER_LINE*7,a3)
+    clr.l   (NB_BYTES_PER_LINE*8,a3)
+    clr.l   (NB_BYTES_PER_LINE*9,a3)
+    clr.l   (NB_BYTES_PER_LINE*15,a3)
+    clr.l   (NB_BYTES_PER_LINE*16,a3)
+
+    bsr blit_plane
+    ; A1 is start of dest, use it to clear upper part and lower part
+    ; and possibly shifted to the left/right
+;;    move.l  a1,d0
+;;    btst    #0,d0
+;;    beq.b   .ok
+;;    subq.l  #1,a1   ; even address, always!
+;;.ok
+    move.l  a1,previous_pacman_address
+    rts
         
 ; < d0.w: x
 ; < d1.w: y
@@ -3097,38 +3240,47 @@ collides_with_maze:
 
 blit_plane
     movem.l d2-d4/a2-a5,-(a7)
-    move.l  d2,d3
+    lea $DFF000,A5
+	move.l d2,bltafwm(a5)	;no masking of first/last word    
     move.w  #4,d2       ; 16 pixels + 2 shift bytes
+    move.w  #16,d3      ; 16 pixels height
     bsr blit_plane_any_internal
     movem.l (a7)+,d2-d4/a2-a5
     rts
     
-; what: blits (any width)x16 data on one plane
+; what: blits (any width)x(any height) data on one plane
 ; args:
-; < A0: data (widthx16)
+; < A0: data (width x height)
 ; < A1: plane
 ; < D0: X
 ; < D1: Y
 ; < D2: blit width in bytes (+2)
 ; < D3: blit mask
+; < D4: blit height
 ; trashes: D0-D1, A1
 ;
 ; if A1 is already computed with X/Y offset and no shifting, an optimization
 ; skips the XY offset computation
 
 blit_plane_any:
-    movem.l d2-d4/a2-a5,-(a7)
-    bsr blit_plane_any_internal
-    movem.l (a7)+,d2-d4/a2-a5
-    rts
-
-blit_plane_any_internal:
-
-blith = 16
-
+    movem.l d2-d5/a2-a5,-(a7)
     lea $DFF000,A5
 	move.l d3,bltafwm(a5)	;no masking of first/last word
-    ; pre-compute the maximum shit here
+    move.w  d4,d3   ; height
+    bsr blit_plane_any_internal
+    movem.l (a7)+,d2-d5/a2-a5
+    rts
+
+; < A5: custom
+; < D0,D1: x,y
+; < A0: source
+; < D2: width in bytes (inc. 2 extra for shifting)
+; < D3: height
+; blit mask set
+; trashes D0-D5, a1
+blit_plane_any_internal:
+    ; pre-compute the maximum of shit here
+    move.w  d3,d4
     lea mul40_table(pc),a2
     add.w   d1,d1
     beq.b   .d1_zero    ; optim
@@ -3137,7 +3289,7 @@ blith = 16
     clr.w   d1
     swap    d1
 .d1_zero
-    move.l  #$09f00000,d4    ;A->D copy, ascending mode
+    move.l  #$09f00000,d5    ;A->D copy, ascending mode
     move    d0,d3
     beq.b   .d0_zero
     and.w   #$F,D3
@@ -3149,20 +3301,20 @@ blith = 16
     clr.w   d3
     lsl.l   #8,d3
     lsl.l   #4,d3
-    or.l    d3,d4            ; add shift
+    or.l    d3,d5            ; add shift
 .d0_zero    
     add.l   d1,a1       ; plane position
 
 	move.w #NB_BYTES_PER_LINE,d0
     sub.w   d2,d0       ; blit width
 
-    move.w #blith*64,d3
+    lsl.w   #6,d4
     lsr.w   #1,d2
-    add.w   d2,d3
+    add.w   d2,d4       ; blit height
 
     ; always the same settings (ATM)
 	move.w #0,bltamod(a5)		;A modulo=bytes to skip between lines
-	move.l d4,bltcon0(a5)	
+	move.l d5,bltcon0(a5)	
 
     ; now just wait for blitter ready to write all registers
 	bsr	wait_blit
@@ -3171,7 +3323,7 @@ blith = 16
     move.w  d0,bltdmod(a5)	;D modulo
 	move.l a0,bltapt(a5)	;source graphic top left corner
 	move.l a1,bltdpt(a5)	;destination top left corner
-	move.w  d3,bltsize(a5)	;rectangle size, starts blit
+	move.w  d4,bltsize(a5)	;rectangle size, starts blit
     rts
 
 ; what: blits 16(32)x16 data on 4 planes (for bonuses), full mask
@@ -3182,19 +3334,21 @@ blith = 16
 ; trashes: D0-D1
 
 blit_4_planes
-    movem.l d2/d4-d5/a0-a1/a5,-(a7)
+    movem.l d2-d6/a0-a1/a5,-(a7)
+    lea $DFF000,A5
+	move.l #-1,bltafwm(a5)	;no masking of first/last word    
     lea     screen_data,a1
-    moveq.l #3,d5
+    moveq.l #3,d6
 .loop
     movem.l d0-d1/a1,-(a7)
     move.w  #4,d2       ; 16 pixels + 2 shift bytes
-    moveq   #-1,d3      ; full mask
+    move.w  #16,d3      ; height
     bsr blit_plane_any_internal
     movem.l (a7)+,d0-d1/a1
     add.l   #SCREEN_PLANE_SIZE,a1
     add.l   #64,a0      ; 32 but shifting!
-    dbf d5,.loop
-    movem.l (a7)+,d2/d4-d5/a0-a1/a5
+    dbf d6,.loop
+    movem.l (a7)+,d2-d6/a0-a1/a5
     rts
     
 wait_blit
@@ -3695,8 +3849,6 @@ pts_1
     incbin  "pts_1.bin"
 pts_2
     incbin  "pts_2.bin"
-namco:
-    incbin  "namco.bin"
 space
     ds.b    8,0
     
@@ -4237,6 +4389,9 @@ pac_dead
     ds.b    64,0        ; empty frame
 pac_lives
     incbin  "pac_lives.bin"
+namco:
+    incbin  "namco.bin"
+    
 bonus_pics:
     incbin  "cherry.bin"
     incbin  "strawberry.bin"
