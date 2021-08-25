@@ -4,9 +4,11 @@
 * Written by Frank Wille in 2013, 2016.
 *
 
-    IFND    CUSTOM
-CUSTOM		equ	$dff000
-    ENDC
+; sorry Frank but this is crap. Sometimes CUSTOM is defined for something else
+; why not using _custom ?
+;    IFND    CUSTOM
+;CUSTOM		equ	$dff000
+;    ENDC
     
 BLTDDAT		equ	$000
 DMACONR		equ	$002

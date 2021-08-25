@@ -18,9 +18,9 @@
 ; Small data may work with vasm and PhxAss only.
 ;
 ; Exported functions and variables:
-; (CUSTOM is the custom-chip register set base address $dff000.)
+; (_custom is the custom-chip register set base address $dff000.)
 ;
-; _mt_install_cia(a6=CUSTOM, a0=VectorBase, d0=PALflag.b)
+; _mt_install_cia(a6=_custom, a0=VectorBase, d0=PALflag.b)
 ;   Install a CIA-B interrupt for calling _mt_music or mt_sfxonly.
 ;   The music module is replayed via _mt_music when _mt_Enable is non-zero.
 ;   Otherwise the interrupt handler calls mt_sfxonly to play sound
@@ -28,26 +28,26 @@
 ;   VBR register. A non-zero PALflag selects PAL-clock for the CIA timers
 ;   (NTSC otherwise).
 ;
-; _mt_remove_cia(a6=CUSTOM)
+; _mt_remove_cia(a6=_custom)
 ;   Remove the CIA-B music interrupt, restore the previous handler and
 ;   reset the CIA timer registers to their original values.
 ;
-; _mt_init(a6=CUSTOM, a0=TrackerModule, a1=Samples|NULL, d0=InitialSongPos.b)
+; _mt_init(a6=_custom, a0=TrackerModule, a1=Samples|NULL, d0=InitialSongPos.b)
 ;   Initialize a new module.
 ;   Reset speed to 6, tempo to 125 and start at the given song position.
 ;   Master volume is at 64 (maximum).
 ;   When a1 is NULL the samples are assumed to be stored after the patterns.
 ;
-; _mt_end(a6=CUSTOM)
+; _mt_end(a6=_custom)
 ;   Stop playing current module.
 ;
-; _mt_soundfx(a6=CUSTOM, a0=SamplePointer,
+; _mt_soundfx(a6=_custom, a0=SamplePointer,
 ;             d0=SampleLength.w, d1=SamplePeriod.w, d2=SampleVolume.w)
 ;   Request playing of an external sound effect on the most unused channel.
 ;   This function is for compatibility with the old API only!
 ;   You should call _mt_playfx instead.
 ;
-; _mt_playfx(a6=CUSTOM, a0=SfxStructurePointer)
+; _mt_playfx(a6=_custom, a0=SfxStructurePointer)
 ;   Request playing of a prioritized external sound effect, either on a
 ;   fixed channel or on the most unused one.
 ;   Structure layout of SfxStructure:
@@ -63,19 +63,19 @@
 ;   The chosen channel is blocked for music until the effect has
 ;   completely been replayed.
 ;
-; _mt_musicmask(a6=CUSTOM, d0=ChannelMask.b)
+; _mt_musicmask(a6=_custom, d0=ChannelMask.b)
 ;   Bits set in the mask define which specific channels are reserved
 ;   for music only. Set bit 0 for channel 0, ..., bit 3 for channel 3.
 ;   When calling _mt_soundfx or _mt_playfx with automatic channel selection
 ;   (sfx_cha=-1) then these masked channels will never be picked.
 ;   The mask defaults to 0.
 ;
-; _mt_mastervol(a6=CUSTOM, d0=MasterVolume.w)
+; _mt_mastervol(a6=_custom, d0=MasterVolume.w)
 ;   Set a master volume from 0 to 64 for all music channels.
 ;   Note that the master volume does not affect the volume of external
 ;   sound effects (which is desired).
 ;
-; _mt_music(a6=CUSTOM)
+; _mt_music(a6=_custom)
 ;   The replayer routine. Is called automatically after _mt_install_cia.
 ;
 ; Byte Variables:
@@ -99,7 +99,6 @@
 ;   This byte defines the number of channels which should be dedicated
 ;   for playing music. So sound effects will never use more
 ;   than 4 - _mt_MusicChannels channels at once. Defaults to 0.
-;
 
 		include	"custom.i"
 		include	"cia.i"
@@ -182,7 +181,7 @@ n_sizeof	rs.b	0
 	xdef	_mt_install_cia
 _mt_install_cia:
 ; Install a CIA-B interrupt for calling _mt_music.
-; a6 = CUSTOM
+; a6 = _custom
 ; a0 = VectorBase
 ; d0 = PALflag.b (0 is NTSC)
 
@@ -254,7 +253,7 @@ mt_Lev6Int:
 	xdef	_mt_remove_cia
 _mt_remove_cia:
 ; Remove CIA-B music interrupt and restore the old vector.
-; a6 = CUSTOM
+; a6 = _custom
 
 	ifnd	SDATA
 	move.l	a4,-(sp)
@@ -297,7 +296,7 @@ mt_TimerAInt:
 ; which defaults to 50 times per second.
 
 	movem.l	d0-d7/a0-a6,-(sp)
-	lea	CUSTOM,a6
+	lea	_custom,a6
 	ifd	SDATA
 	lea	_LinkerDB,a4
 	else
@@ -331,7 +330,7 @@ mt_TimerBdmaon:
 ; One-shot TimerB interrupt to enable audio DMA after 496 ticks.
 
 	; clear EXTER interrupt flag
-	move.w	#$2000,CUSTOM+INTREQ
+	move.w	#$2000,_custom+INTREQ
 
 	; check and clear CIAB interrupt flags
 	btst	#1,CIAB+CIAICR
@@ -339,7 +338,7 @@ mt_TimerBdmaon:
 
 	; it was a TB interrupt, restart timer to set repeat, enable DMA
 	move.b	#$19,CIAB+CIACRB
-	move.w	mt_dmaon(pc),CUSTOM+DMACON
+	move.w	mt_dmaon(pc),_custom+DMACON
 
 	; set level 6 interrupt to mt_TimerBsetrep
 	move.l	a0,-(sp)
@@ -359,7 +358,7 @@ mt_TimerBsetrep:
 ; One-shot TimerB interrupt to set repeat samples after another 496 ticks.
 
 	move.l	a6,-(sp)
-	lea	CUSTOM+INTREQ,a6
+	lea	_custom+INTREQ,a6
 
 	; check and clear CIAB interrupt flags
 	btst	#1,CIAB+CIAICR
@@ -429,7 +428,7 @@ _mt_init:
 ; Initialize new module.
 ; Reset speed to 6, tempo to 125 and start at given song position.
 ; Master volume is at 64 (maximum).
-; a6 = CUSTOM
+; a6 = _custom
 ; a0 = module pointer
 ; a1 = sample pointer (NULL means samples are stored within the module)
 ; d0 = initial song position
@@ -548,7 +547,7 @@ mt_reset:
 	xdef	_mt_end
 _mt_end:
 ; Stop playing current module.
-; a6 = CUSTOM
+; a6 = _custom
 
 	ifd	SDATA
 	clr.b	mt_Enable(a4)
@@ -572,7 +571,7 @@ _mt_soundfx:
 ; Request playing of an external sound effect on the most unused channel.
 ; This function is for compatibility with the old API only!
 ; You should call _mt_playfx instead!
-; a6 = CUSTOM
+; a6 = _custom
 ; a0 = sample pointer
 ; d0.w = sample length in words
 ; d1.w = sample period
@@ -591,16 +590,12 @@ _mt_soundfx:
 ;---------------------------------------------------------------------------
 	xdef	_mt_playfx
 _mt_playfx:
-; JOTD: Supercars 2 uses a4 in a blitter interrupt routine
-; we have to freeze interrupts when initializing a sound outside an interrupt
-; okay from interrupts since CIA interrupt has higher priority
-	move.w	#$4000,INTENA(a6)
 ; Request playing of a prioritized external sound effect, either on a
 ; fixed channel or on the most unused one.
 ; A negative channel specification means to use the best one.
 ; The priority is unsigned and should be greater than zero.
 ; This channel will be blocked for music until the effect has finished.
-; a6 = CUSTOM
+; a6 = _custom
 ; a0 = sfx-structure pointer with the following layout:
 ;      0: ptr, 4: len.w, 6: period.w, 8: vol.w, 10: channel.b, 11: priority.b
 
@@ -894,7 +889,7 @@ exit_playfx:
 _mt_musicmask:
 ; Set bits in the mask define which specific channels are reserved
 ; for music only.
-; a6 = CUSTOM
+; a6 = _custom
 ; d0.b = channel-mask (bit 0 for channel 0, ..., bit 3 for channel 3)
 
 	ifnd	SDATA
@@ -927,7 +922,7 @@ _mt_mastervol:
 ; Set a master volume from 0 to 64 for all music channels.
 ; Note that the master volume does not affect the volume of external
 ; sound effects (which is desired).
-; a6 = CUSTOM
+; a6 = _custom
 ; d0.w = master volume
 
 	; stingray, since each volume table has a size of 65 bytes
@@ -956,7 +951,7 @@ _mt_music:
 ; Called from interrupt.
 ; Play next position when Counter equals Speed.
 ; Effects are always handled.
-; a6 = CUSTOM
+; a6 = _custom
 
 	moveq	#0,d7			; d7 is always zero
 
@@ -1112,7 +1107,7 @@ same_pattern:
 mt_sfxonly:
 ; Called from interrupt.
 ; Plays sound effects on free channels.
-; a6 = CUSTOM
+; a6 = _custom
 
 	moveq	#0,d7			; d7 is always zero
 

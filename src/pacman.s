@@ -32,9 +32,8 @@
     incdir "../sounds"
 
 	
-;CIA-A registre port A (bouton souris)
 
-CIAAPRA = $BFE001
+INTERRUPTS_ON_MASK = $E038
 
     STRUCTURE   SpritePalette,0
     UWORD   color0
@@ -141,8 +140,6 @@ NB_FLASH_FRAMES = 14
 PLAYER_KILL_TIMER = NB_TICKS_PER_SEC+NB_TICKS_PER_SEC/2+(NB_TICKS_PER_SEC/8)*9+NB_TICKS_PER_SEC/4+NB_TICKS_PER_SEC
 GHOST_KILL_TIMER = (NB_TICKS_PER_SEC*5)/6
 
-DEMO_PACMAN_TIMER = 20  ; TEMP!!!
-    
 X_START = 16
 Y_START = 24
 ; tunnel max
@@ -255,14 +252,19 @@ Start:
 ;    jsr (_LVOWaitTOF,a6)
 
     move.w  #STATE_INTRO_SCREEN,current_state
+
     
-    bsr init_interrupts
+    bsr init_sound
+    
     ; shut off dma
     lea _custom,a5
-    move.w #$03E0,dmacon(A5)
-    
-    ; intro screen
     move.w  #$7FFF,(intena,a5)
+    move.w  #$7FFF,(intreq,a5)
+    move.w #$03E0,dmacon(A5)
+
+    bsr init_interrupts
+    ; intro screen
+    
     
     moveq #NB_PLANES,d4
     lea	bitplanes,a0              ; adresse de la Copper-List dans a0
@@ -318,7 +320,7 @@ Start:
     bsr wait_bof
     ; init sprite, bitplane, whatever dma
     move.w #$83EF,dmacon(a5)
-    move.w #$C038,intena(a5)
+    move.w #INTERRUPTS_ON_MASK,intena(a5)    ; enable level 6!!
     
 .intro_loop
     cmp.w   #STATE_INTRO_SCREEN,current_state
@@ -335,6 +337,9 @@ Start:
     move.l  joystick_state(pc),d0
     btst    #JPB_BTN_RED,d0
     bne.b   .release
+
+    lea credit_sound(pc),a0
+    bsr play_loop_fx
 
 .game_start_loop
     move.l  joystick_state(pc),d0
@@ -376,14 +381,13 @@ Start:
 
     ; enable copper interrupts, mainly
 
-
 .new_life
     bsr wait_bof
     bsr init_ghosts
     bsr init_player
     bsr draw_lives
     move.w  #STATE_PLAYING,current_state
-    move.w #$C038,intena(a5)
+    move.w #INTERRUPTS_ON_MASK,intena(a5)
 .mainloop
     btst    #6,$bfe001
     beq.b   .out
@@ -409,6 +413,8 @@ Start:
     ; quit
     bsr     restore_interrupts
 			      
+    bsr     finalize_sound
+    
     lea _custom,a5
     move.l  gfxbase,a1
     move.l  gfxbase_copperlist,StartList(a1) ; adresse du début de la liste
@@ -848,7 +854,6 @@ init_player
     move.w  #-1,player_killed_timer
     move.w  #-1,ghost_eaten_timer
     clr.w   next_ghost_score
-    move.l  screen_data+2*NB_BYTES_PER_LINE+SCREEN_PLANE_SIZE,previous_pacman_address  ; valid address for first clear
 	rts	    
 
 DEBUG_X = 8     ; 232+8
@@ -859,26 +864,56 @@ ghost_debug
     move.w  #DEBUG_X,d0
     move.w  #DEBUG_Y+100,d1
     lea	screen_data+SCREEN_PLANE_SIZE*3,a1 
-    lea .gx(pc),a0
-    bsr write_string
-    lsl.w   #3,d0
-    add.w  #DEBUG_X,d0
-    clr.l   d2
-    move.w xpos(a2),d2
-    move.w  #5,d3
-    bsr write_decimal_number
+
+    bsr .debug_ghost
+
     move.w  #DEBUG_X,d0
     add.w  #8,d1
-    move.l  d0,d4
-    lea .gy(pc),a0
+    lea .elroy(pc),a0
     bsr write_string
     lsl.w   #3,d0
     add.w  #DEBUG_X,d0
     clr.l   d2
-    move.w ypos(a2),d2
-    move.w  #3,d3
+    move.l  a2,a0
+    movem.l  d0-d1,-(a7)
+    bsr get_elroy_level
+    move.w  d0,d2
+    movem.l  (a7)+,d0-d1
+    move.w  #0,d3
     bsr write_decimal_number
+    
+    move.w  #DEBUG_X,d0
+    add.w  #8,d1
+    lea .pink(pc),a0
+    bsr write_string
 
+    add.l   #Ghost_SIZEOF,a2
+    bsr .debug_ghost
+
+    
+;    move.w  #DEBUG_X,d0
+;    add.w  #8,d1
+;    lea .dir(pc),a0
+;    bsr write_string
+;    lsl.w   #3,d0
+;    add.w  #DEBUG_X,d0
+;    clr.l   d2
+;    move.w  direction(a2),d2
+;    move.w  #0,d3
+;    bsr write_decimal_number
+;
+;    move.w  #DEBUG_X,d0
+;    add.w  #8,d1
+;    lea .pdir(pc),a0
+;    bsr write_string
+;    lsl.w   #3,d0
+;    add.w  #DEBUG_X,d0
+;    clr.l   d2
+;    move.w  possible_directions,d2
+;    move.w  #4,d3
+;    bsr write_hexadecimal_number
+    rts
+.debug_ghost
     move.w  #DEBUG_X,d0
     add.w  #8,d1
     lea .timer(pc),a0
@@ -891,7 +926,7 @@ ghost_debug
     swap    d2
     clr.w   d2
     swap    d2
-    move.w  #2,d3
+    move.w  #3,d3
     bsr write_decimal_number
     
     move.w  #DEBUG_X,d0
@@ -904,44 +939,30 @@ ghost_debug
     move.w  mode(a2),d2
     move.w  #0,d3
     bsr write_decimal_number
-    
-    move.w  #DEBUG_X,d0
-    add.w  #8,d1
-    lea .dir(pc),a0
-    bsr write_string
-    lsl.w   #3,d0
-    add.w  #DEBUG_X,d0
-    clr.l   d2
-    move.w  direction(a2),d2
-    move.w  #0,d3
-    bsr write_decimal_number
 
     move.w  #DEBUG_X,d0
     add.w  #8,d1
-    lea .pdir(pc),a0
+    lea .modec(pc),a0
     bsr write_string
     lsl.w   #3,d0
     add.w  #DEBUG_X,d0
     clr.l   d2
-    move.w  possible_directions,d2
-    move.w  #4,d3
-    bsr write_hexadecimal_number
-    rts
-.gx
-        dc.b    "GX ",0
-.gy
-        dc.b    "GY ",0
+    move.w  mode_counter(a2),d2
+    move.w  #3,d3
+    bra write_decimal_number
+    
 .timer
         dc.b    "MTIM ",0
 .mode
         dc.b    "MODE ",0
-.dir
-        dc.b    "DIR ",0
-.pdir
-        dc.b    "PDIR ",0
+.modec
+        dc.b    "MODEC ",0
+.elroy:
+    dc.b    "ELROY ",0
+.pink
+    dc.b    "PINK",0
         even
-possible_directions
-        dc.w    0
+
         
 draw_debug
     lea player(pc),a2
@@ -1305,6 +1326,9 @@ Y_DOT = 160
 
 Y_PAC_ANIM = 136
 X_DEMO_POWER_DOT = 48
+DEMO_PACMAN_TIMER = NB_TICKS_PER_SEC*14
+DEMO_DOT_SCORE_TIMER = NB_TICKS_PER_SEC*12
+DEMO_POWER_DOT_TIMER = NB_TICKS_PER_SEC*13
 
 DRAW_GHOST_INFO:MACRO
     cmp.w   #NB_TICKS_PER_SEC*(\2*3+1),intro_timer
@@ -1390,6 +1414,8 @@ draw_intro_screen
     DRAW_GHOST_INFO cyan,2
     DRAW_GHOST_INFO orange,3
 
+    cmp.w   #DEMO_DOT_SCORE_TIMER,intro_timer
+    bne.b   .no_dot_score
     lea	screen_data+DOT_PLANE_OFFSET+X_DOT/8+Y_DOT*NB_BYTES_PER_LINE,a1
     bsr draw_dot
     move.w  #X_DOT,d0
@@ -1398,12 +1424,9 @@ draw_intro_screen
     move.w  #$FFF,d2
     bsr write_color_string
    
-    lea	screen_data+DOT_PLANE_OFFSET+X_DEMO_POWER_DOT/8+Y_PAC_ANIM*NB_BYTES_PER_LINE,a1
-    lea  powerdots(pc),a0
-    move.l  a1,(a0)+
-    bsr draw_power_dot
     
     lea	screen_data+DOT_PLANE_OFFSET+X_DOT/8+(Y_DOT+16)*NB_BYTES_PER_LINE,a1
+    lea  powerdots+4(pc),a0
     move.l  a1,(a0)+
     bsr draw_power_dot
     ; 2 other power dots invalidated
@@ -1414,7 +1437,15 @@ draw_intro_screen
     lea     fifty_pts_string(pc),a0
     move.w  #$FFF,d2
     bsr write_color_string
-    
+.no_dot_score
+
+    cmp.w   #DEMO_POWER_DOT_TIMER,intro_timer
+    bne.b   .no_power_dot
+    lea	screen_data+DOT_PLANE_OFFSET+X_DEMO_POWER_DOT/8+Y_PAC_ANIM*NB_BYTES_PER_LINE,a1
+    lea  powerdots(pc),a0
+    move.l  a1,(a0)+
+    bsr draw_power_dot
+        
     ; namco logo
     lea namco,a0
     lea screen_data,a1
@@ -1428,6 +1459,7 @@ draw_intro_screen
     move.w  #X_DOT,d0
     move.w  #224,d1
     bsr blit_plane_any
+.no_power_dot
     
     cmp.w   #DEMO_PACMAN_TIMER,intro_timer
     bcs.b   .dont_draw_characs
@@ -1766,27 +1798,39 @@ clear_dot
     clr.b  (NB_BYTES_PER_LINE*4,a1)
     rts
     
-init_interrupts
-    ; assuming VBR at 0
+init_sound
+    ; init phx ptplayer, needs a6 as custom, a0 as vbr (which is zero)
     sub.l   a0,a0
+    moveq.l #1,d0
+    lea _custom,a6
+    jsr _mt_install_cia
+    rts
+    
+init_interrupts
+    lea _custom,a6
+    sub.l   a0,a0
+
+    move.w  (dmaconr,a6),saved_dmacon
+    move.w  (intenar,a6),saved_intena
+
+    sub.l   a0,a0
+    ; assuming VBR at 0
     lea saved_vectors(pc),a1
     move.l  ($68,a0),(a1)+
     move.l  ($6C,a0),(a1)+
-    move.l  ($78,a0),(a1)+
+    ;move.l  ($78,a0),(a1)+
     
     lea level3_interrupt(pc),a1
     move.l  a1,($6C,a0)
     
+    
+    rts
 
-    ; init phx ptplayer, needs a6 as custom, a0 as vbr (which is zero)
-
-    moveq.l #1,d0
+finalize_sound
+    ; assuming VBR at 0
+    sub.l   a0,a0
     lea _custom,a6
-    jsr _mt_install_cia
-    
-    move.w  (dmaconr,a6),saved_dmacon
-    move.w  (intenar,a6),saved_intena
-    
+    jsr _mt_remove_cia
     rts
     
 restore_interrupts:
@@ -1796,18 +1840,17 @@ restore_interrupts:
     lea saved_vectors(pc),a1
     move.l  (a1)+,($68,a0)
     move.l  (a1)+,($6C,a0)
-    move.l  (a1)+,($78,a0)
+    ;move.l  (a1)+,($78,a0)
+
+    lea _custom,a6
 
     move.w  saved_dmacon,d0
     bset    #15,d0
-    move.w  d0,(dmacon,a5)
+    move.w  d0,(dmacon,a6)
     move.w  saved_intena,d0
     bset    #15,d0
-    move.w  d0,(intena,a5)
+    move.w  d0,(intena,a6)
 
-    ; this crashes
-    ;lea _custom,a6
-    ;jsr _mt_remove_cia
 
     rts
     
@@ -1835,9 +1878,9 @@ level3_interrupt:
     beq.b   .blitter
     ; copper
     bsr draw_all
-    ;bsr draw_debug
+    bsr draw_debug
     bsr update_all
-    move.w  vbl_counter,d0
+    move.w  vbl_counter(pc),d0
     addq.w  #1,d0
     cmp.w   #5,d0
     bne.b   .normal
@@ -1874,6 +1917,8 @@ mouse:
 ; trashes: potentially all registers
 
 update_all
+    bsr update_sound_loops
+
     DEF_STATE_CASE_TABLE
 
 .intro_screen
@@ -1986,7 +2031,11 @@ check_pac_ghosts_collisions
     beq.b   .nomatch        ; ignore eyes
     ; pacman is killed
     move.w  #PLAYER_KILL_TIMER,player_killed_timer
+    ; TODO stop sound loop?
+
     rts
+
+    
     
 .pac_eats_ghost:
 a_ghost_was_eaten:
@@ -2395,7 +2444,7 @@ update_ghosts:
     cmp.w   pen_tile_xy+2(pc),d5
     bne.b   .nothing
     ; reached target tile: respawn
-    move.l  previous_mode(a4),mode(a4)  ; hack also restores mode
+    move.l  previous_mode_timer(a4),mode_timer(a4)  ; hack also restores mode
     move.l  a4,a0
     bsr     set_normal_ghost_palette
 .nothing
@@ -2744,7 +2793,9 @@ update_ghosts:
     beq.b   .chase
     cmp.w   #MODE_CHASE,d0
     beq.b   .scatter
-
+    ; should not reach here!
+    blitz
+    nop
 .chase
     move.w  #MODE_CHASE,D0
     
@@ -2868,6 +2919,10 @@ update_pac
     moveq.w #0,d0
     move.w  #PLAYER_KILL_TIMER-NB_TICKS_PER_SEC,d5
     sub.w   d6,d5
+    bne.b   .no_sound
+    lea killed_sound(pc),a0
+    bsr play_fx
+.no_sound
     bcs.b   .frame_done     ; frame 0
     ; d5 is the timer starting from 0
     lea player_kill_anim_table(pc),a0
@@ -2985,7 +3040,7 @@ update_pac
     move.w  ypos(a4),d1
     bsr is_on_bonus
     move.b   d0,d2
-    beq.b   .end_pac
+    beq.b   .end_pac    ; nothing
 
     lea	screen_data+DOT_PLANE_OFFSET,a1
     move.w  xpos(a4),d0
@@ -3000,7 +3055,7 @@ update_pac
     cmp.b   #2,d2
     beq.b   .power
     ; bonus (fruit)
-    bra.b   .score
+    bra.b   .bonus_eaten
 .power
     ; save A1
     move.l  A1,A2
@@ -3027,9 +3082,6 @@ update_pac
     move.b  #1,still_timer(a4)      ; still during 1 frame
     bsr clear_dot
 .score
-    and.w   #$FF,d2
-    cmp.w   #3,d2
-    bcc.b   .bonus_eaten
     ; dot
     move.l  ghost_which_counts_dots(pc),a3
 .retry
@@ -3043,7 +3095,7 @@ update_pac
 .do_ghost_count
     sub.w   #1,pen_nb_dots(a3)
 .no_need_to_count_dots
-    move.b  nb_dots_eaten,d4
+    move.b  nb_dots_eaten(pc),d4
     addq.b  #1,d4
     tst.w   bonus_timer
     bne.b   .skip_fruit_test
@@ -3839,7 +3891,7 @@ fruit_score_index:
 next_ghost_score
     dc.w    0
 previous_pacman_address
-    dc.l    0
+    dc.l    screen_data+2*NB_BYTES_PER_LINE+SCREEN_PLANE_SIZE ; valid address for first clear
 ghost_which_counts_dots
     dc.l    0
 tunnel_sprite_control_word
@@ -4248,6 +4300,93 @@ is_elroy:
     moveq   #1,d0
     rts
 
+
+	STRUCTURE	Sound,0
+    ; matches ptplayer
+    APTR    ss_data
+    UWORD   ss_len
+    UWORD   ss_per
+    UWORD   ss_vol
+    UBYTE   ss_channel
+    UBYTE   ss_pri
+    ; custom shit
+    UWORD   ss_nb_repeats
+    UWORD   ss_current_repeat
+    UWORD   ss_vbl_length       ; auto compute
+    UWORD   ss_current_vbl
+    
+    LABEL   Sound_SIZEOF
+    
+
+; < A0: sound struct
+play_fx
+    lea _custom,a6
+    bra _mt_playfx
+
+; < A0: sound struct
+play_loop_fx
+    lea loop_list(pc),a1
+    ; find a free slot or the same slot
+.ffloop
+    move.l  (a1),d0
+    beq.b   .free
+    cmp.l   d0,a0
+    beq.b   .free       ; same one: reuse
+    addq.l  #4,a1
+    bra.b   .ffloop
+.free
+    move.l  a0,(a1)
+    move.w  #0,ss_current_vbl(a0)  ; reset loop VBL timer TEMP 10/50s...
+    move.w  ss_nb_repeats(a0),ss_current_repeat(a0)   ; set number of repeats
+    rts
+    
+stop_loop_fx
+    move.w   #-1,12(a0)  ; stop loop counter
+    rts
+    
+; custom addition to ptplayer: ability to loop sound several times or infinite
+update_sound_loops:
+    lea loop_list(pc),a1
+    ; check timers
+.ulloop
+    move.l  (a1)+,d0
+    beq.b   .done
+    move.l  d0,a0
+    ; check timer: do we need to play again?
+    move.w  ss_current_vbl(a0),d0
+    beq.b   .played
+    subq.w  #1,d0       ; decrease
+    move.w  d0,ss_current_vbl(a0)
+    bra.b   .ulloop ; next
+.played:
+    ; ended playing, do we need to play again?
+    tst.w   ss_current_repeat(a0)
+    bmi.b   .play
+    beq.b   .ulloop ; no more repeats
+    subq.w  #1,ss_current_repeat(a0)
+.play
+    move.w  ss_vbl_length(a0),ss_current_vbl(a0)  ; reset loop VBL timer TEMP 10/50s...
+    bsr play_fx
+    bra.b   .ulloop
+.done
+    rts
+    
+;base addr, len, per, vol, channel<<8 + pri, loop timer, number of repeats (or -1), current repeat, current vbl
+
+FXFREQBASE = 3579564
+SOUNDFREQ = 22050
+
+SOUND_ENTRY:MACRO
+\1_sound
+    dc.l    \1_raw
+    dc.w    (\1_raw_end-\1_raw)/2,FXFREQBASE/SOUNDFREQ,64,$FF01,\2,0,NB_TICKS_PER_SEC*(\1_raw_end-\1_raw)/SOUNDFREQ,0
+    ENDM
+    
+    SOUND_ENTRY killed,0
+    SOUND_ENTRY credit,0
+
+loop_list:
+    ds.l    10,0
     
 ; number of dots remaining, triggers elroy1 mode
 elroy_table:
@@ -4694,10 +4833,14 @@ score_1600:
     incbin  "scores_3.bin"
     dc.l    0
 
-killed_sound
+killed_raw
     incbin  "pacman_killed.raw"
     even
-killed_sound_end
+killed_raw_end
+credit_raw
+    incbin  "credit.raw"
+    even
+credit_raw_end
     
 empty_sprite
     dc.l    0,0
