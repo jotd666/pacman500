@@ -31,7 +31,6 @@
     incdir "../sprites"
     incdir "../sounds"
 
-	
 
 INTERRUPTS_ON_MASK = $E038
 
@@ -312,6 +311,8 @@ Start:
     move.w #0,bpl2mod(a5)
 
 intro:
+    bsr stop_background_loop
+    
     bsr hide_sprites
 
     bsr clear_screen
@@ -319,7 +320,8 @@ intro:
     bsr draw_score
 
     move.w  #0,state_timer
-
+    move.w  #0,vbl_counter
+    
     bsr wait_bof
     ; init sprite, bitplane, whatever dma
     move.w #$83E0,dmacon(a5)
@@ -870,7 +872,7 @@ init_player
     clr.w   prepost_turn(a0)
     clr.b   still_timer(a0)
     move.w  #0,frame(a0)
-    move.w  #50,ready_timer
+    move.w  #NB_TICKS_PER_SEC,ready_timer
     clr.l   previous_random
     move.w  #-1,player_killed_timer
     move.w  #-1,ghost_eaten_timer
@@ -1064,7 +1066,6 @@ draw_debug
 draw_ghosts:
     tst.w  ghost_eaten_timer
     bmi.b   .no_ghost_eat
-
     bsr hide_ghost_sprites
     
     ; store score
@@ -1123,6 +1124,8 @@ draw_ghosts:
     cmp.w   #MODE_EYES,d3
     beq.b   .eyes
 
+    lea     palette(a0),a2      ; normal ghost colors
+
     move.l  frame_table(a0),a1
     move.w  frame(a0),d2
     lsr.w   #2,d2   ; 8 divide to get 0,1, divide by 4 then mask after adding direction
@@ -1143,7 +1146,6 @@ draw_ghosts:
 .no_toggle
     move.w  d4,flash_toggle_timer(a0)
 .no_flashing
-    move.l  color_register(a0),a3
     lea     frightened_ghosts_blue_palette(pc),a2
     ; select proper palette (blue/white)
     tst.b   flashing_as_white(a0)
@@ -1151,9 +1153,6 @@ draw_ghosts:
     ; white flashing
     lea     frightened_ghosts_white_palette(pc),a2
 .no_white
-    ; directly change color registers for that sprite
-    move.l  (a2)+,(a3)+
-    move.l  (a2)+,(a3)+
     bra.b   .fright
 .no_fright
     add.w   direction(a0),d2     ; add 0,4,8,12 depending on direction
@@ -1168,6 +1167,11 @@ draw_ghosts:
     bclr    #0,d2   ; even
     add.w   d2,d2       ; times 2
 .end_anim
+    ; directly change color registers for that sprite FUCK
+    move.l  color_register(a0),a3
+    move.l  (a2)+,(a3)+
+    move.l  (a2)+,(a3)+
+
     move.l  (a1,d2.w),a1
     move.l  d0,(a1)     ; store control word
     move.l  a1,d2    
@@ -1184,9 +1188,7 @@ draw_ghosts:
     move.l eye_frame_table(a0),a1
     move.w   direction(a0),d2
     lea ghost_eyes(pc),a2       ; palette
-    move.l  color_register(a0),a3
-    move.l  (a2)+,(a3)+
-    move.l  (a2)+,(a3)+
+
     ; TODO set black tunnel sprite proper palette in copperlist
     bra.b   .end_anim
      
@@ -1217,18 +1219,21 @@ draw_all
     bsr write_color_string
     bra.b   .draw_complete
 .playing
-    tst.w   ready_timer
-    beq.b   .ready_off
+    tst.w   clear_ready_message
+    beq.b   .no_ready_clr
+    clr.w   clear_ready_message
+    ; remove "READY!" message
     lea	screen_data+SCREEN_PLANE_SIZE,a1
     move.w  #88,d0
     move.w  #136,d1
-    cmp.w   #1,ready_timer
-    bne.b   .still_ready
-    ; remove "READY!" message
     move.w  #14,d2   ; 96
     bsr clear_plane_any
-    bra.b   .ready_off
+.no_ready_clr    
+    tst.w   ready_timer
+    bmi.b   .ready_off
 .still_ready
+    move.w  #88,d0
+    move.w  #136,d1
     move.w  #$0ff0,d2
     lea ready_string(pc),a0
     bsr write_color_string
@@ -1774,11 +1779,15 @@ draw_dots:
     ; draw pen gate
     lea	screen_data+(RED_YSTART_POS-15)*NB_BYTES_PER_LINE+(RED_XSTART_POS-X_START)/8-1,a1
     moveq.l #-1,d0
-    move.w  d0,(a1)
-    move.w  d0,(NB_BYTES_PER_LINE,a1)
+    move.b  d0,(a1)
+    move.b  d0,(NB_BYTES_PER_LINE,a1)
+    move.b  d0,(1,a1)
+    move.b  d0,(NB_BYTES_PER_LINE+1,a1)
     add.l   #SCREEN_PLANE_SIZE*3,a1
-    move.w  d0,(a1)
-    move.w  d0,(NB_BYTES_PER_LINE,a1)
+    move.b  d0,(a1)
+    move.b  d0,(NB_BYTES_PER_LINE,a1)
+    move.b  d0,(1,a1)
+    move.b  d0,(NB_BYTES_PER_LINE+1,a1)
 
 
     ; init dots
@@ -1872,9 +1881,18 @@ init_interrupts
     sub.l   a0,a0
     ; assuming VBR at 0
     lea saved_vectors(pc),a1
+    move.l  ($8,a0),(a1)+
+    move.l  ($c,a0),(a1)+
+    move.l  ($10,a0),(a1)+
     move.l  ($68,a0),(a1)+
     move.l  ($6C,a0),(a1)+
-    ;move.l  ($78,a0),(a1)+
+
+    lea   exc8(pc),a1
+    move.l  a1,($8,a0)
+    lea   excc(pc),a1
+    move.l  a1,($c,a0)
+    lea   exc10(pc),a1
+    move.l  a1,($10,a0)
     
     lea level2_interrupt(pc),a1
     move.l  a1,($68,a0)
@@ -1884,7 +1902,23 @@ init_interrupts
     
     
     rts
-
+    
+exc8
+    blitz
+    nop
+    rte
+excc
+    blitz
+    nop
+    nop
+    rte
+exc10
+    blitz
+    nop
+    nop
+    nop
+    rte
+    
 finalize_sound
     ; assuming VBR at 0
     sub.l   a0,a0
@@ -1898,9 +1932,12 @@ restore_interrupts:
     sub.l   a0,a0
     
     lea saved_vectors(pc),a1
+    move.l  (a1)+,($8,a0)
+    move.l  (a1)+,($c,a0)
+    move.l  (a1)+,($10,a0)
     move.l  (a1)+,($68,a0)
     move.l  (a1)+,($6C,a0)
-    ;move.l  (a1)+,($78,a0)
+
 
     lea _custom,a6
 
@@ -1915,6 +1952,7 @@ restore_interrupts:
     rts
     
 saved_vectors
+        dc.l    0,0,0   ; some exceptions
         dc.l    0   ; keyboard
         dc.l    0   ; vblank
         dc.l    0   ; cia b
@@ -2088,6 +2126,8 @@ update_all
     rts  ; bra update_power_dot_flashing
 
 .level_completed
+    bsr hide_sprites
+    bsr.b   stop_background_loop
     subq.w  #1,maze_blink_timer
     bne.b   .no_change
     move.w  #MAZE_BLINK_TIME,maze_blink_timer
@@ -2095,7 +2135,7 @@ update_all
     beq.b   .next_level
     eor.b   #1,.color_blue
     beq.b   .orig
-    move.w  maze_color,d0
+    move.w  maze_color(pc),d0
     bra.b   .chcol
 .orig
     move.w  #$FFF,d0
@@ -2108,10 +2148,12 @@ update_all
     
 .next_level
      move.w  #STATE_NEXT_LEVEL,current_state
-     move.w #50,ready_timer
+     move.w #ORIGINAL_TICKS_PER_SEC,ready_timer
      rts
      
 .game_over
+    bsr.b   stop_background_loop
+
     tst.w   state_timer
     bne.b   .cont
     move.w  #STATE_INTRO_SCREEN,current_state
@@ -2120,15 +2162,27 @@ update_all
     rts
 .playing
     tst.w   ready_timer
-    beq.b   .ready_off
+    bmi.b   .ready_off
+    bne.b   .dec
+    ; 0
+    move.w  #1,clear_ready_message
+    ; start music
+    clr.w   loop_index
+    bsr start_background_loop
+.dec
     subq.w  #1,ready_timer
     rts
 .ready_off
+
     bsr update_power_dot_flashing
     move.w  ghost_eaten_timer(pc),d6
     bmi.b   .update_pac_and_ghosts
-    subq.w  #1,d6
+    subq.w  #1,d6    
     move.w  d6,ghost_eaten_timer
+    bne.b   .no_sound_loop_change
+    lea     loop_eyes_sound(pc),a0
+    bsr     play_loop_fx
+.no_sound_loop_change    
     rts
 .update_pac_and_ghosts
     bsr update_pac
@@ -2191,9 +2245,8 @@ check_pac_ghosts_collisions
     tst.b   invincible_cheat_flag
     bne.b   .nomatch    
     move.w  #PLAYER_KILL_TIMER,player_killed_timer
-    ; TODO stop sound loop?
+    bra stop_background_loop
 
-    rts
 
     
     
@@ -2204,7 +2257,7 @@ a_ghost_was_eaten:
     move.w  #GHOST_KILL_TIMER,ghost_eaten_timer
     cmp.w   #STATE_PLAYING,current_state
     bne.b   .no_sound
-    lea     ghost_eaten_sound,a0
+    lea     ghost_eaten_sound(pc),a0
     bsr     play_fx
 .no_sound
     
@@ -2615,6 +2668,12 @@ update_ghosts:
     move.l  previous_mode_timer(a4),mode_timer(a4)  ; hack also restores mode
     move.l  a4,a0
     bsr     set_normal_ghost_palette
+    ; check if other ghosts are in "eyes" mode
+    bsr     some_ghosts_are_eyes
+    tst.w   d0
+    bne.b   .nothing    ; still some eyes
+    ; no more eyes
+    bsr resume_sound_loop
 .nothing
     bra.b   .no_reverse
 .no_eyes
@@ -2648,7 +2707,9 @@ update_ghosts:
     bne.b   .free_direction
     addq.l  #2,a0
     dbf     d0,.try_dir
-    illegal     ; should not have 4 directions blocked, not possible
+    ; no free direction, probably cornercase with in-pen/exiting pen
+    ; ignore
+    bra.b   .next_ghost
 .free_direction
     moveq   #0,d0
     move.b  (1,a0),d0      ; translate to actual direction enumerate
@@ -3040,12 +3101,46 @@ compute_square_distance
     add.l   d5,d6   ; may be > 65536
     rts
     
+some_ghosts_are_eyes:
+    move.l  a0,-(a7)
+    lea ghosts(pc),a0
+    move.w  #3,d0
+.chkloop
+    cmp.w   #MODE_EYES,mode(a0)
+    beq.b   .found
+    add.w   #Ghost_SIZEOF,a0
+    dbf d0,.chkloop
+    moveq.l #0,d0
+.out
+    move.l  (a7)+,a0
+    rts
+
+.found
+    moveq.l #1,d0
+    bra.b   .out
+    
+resume_sound_loop:
+    tst.w   fright_timer
+    beq.b   .normal
+    lea loop_fright_sound(pc),a0
+    bra play_loop_fx
+.normal
+    bra start_background_loop
+    
+    
 ; what: sets game state when a power pill has been taken
 ; trashes: A0,A1,D0,D1
 power_pill_taken
     move.l  d2,-(a7)
     ; resets next ghost eaten score
     clr.w  next_ghost_score
+
+    cmp.w   #STATE_PLAYING,current_state
+    bne.b   .no_sound
+    lea loop_fright_sound(pc),a0
+    bsr play_loop_fx
+.no_sound
+    
     lea ghosts(pc),a0
     moveq.w  #3,d0
 .gloop
@@ -3090,8 +3185,10 @@ update_pac
     bne.b   .no_sound
     lea killed_sound(pc),a0
     bsr play_fx
+    
 .no_sound
     bcs.b   .frame_done     ; frame 0
+    bsr.b   stop_background_loop    
     ; d5 is the timer starting from 0
     lea player_kill_anim_table(pc),a0
     move.b  (a0,d5.w),d0
@@ -3103,6 +3200,10 @@ update_pac
     tst.w   fright_timer
     beq.b   .no_fright1
     sub.w   #1,fright_timer
+    bne.b   .no_fright1
+    ; resume sound loop
+    lea loop_fright_sound(pc),a0
+    bsr start_background_loop
 .no_fright1
     tst.w   bonus_timer
     beq.b   .no_fruit
@@ -4120,11 +4221,15 @@ bonus_clear_message
     dc.w    0
 bonus_score_clear_message
     dc.w    0
+clear_ready_message
+    dc.w    0
     
 score_table
     dc.w    0,1,5
 fruit_score     ; must follow score_table
     dc.w    10
+loop_array:
+    dc.l    0,0,0,0
     
     
     
@@ -4512,56 +4617,98 @@ play_fx
 
 ; < A0: sound struct
 play_loop_fx
-    move.l  a1,-(a7)
-    move.l  d0,-(a7)
-    lea loop_list(pc),a1
-    ; find a free slot or the same slot
-.ffloop
-    move.l  (a1),d0
-    beq.b   .free
-    cmp.l   d0,a0
-    beq.b   .free       ; same one: reuse
-    addq.l  #4,a1
-    bra.b   .ffloop
-.free
-    move.l  a0,(a1)
+    movem.l  d0-d1/a1,-(a7)
+    moveq   #0,d0
+    move.b  ss_channel(a0),d0
+    bmi.b   .out            ; no channel set: out
+    add.w   d0,d0
+    add.w   d0,d0
+    lea loop_array(pc),a1
+    move.l  (a1,d0.w),d1
+    beq.b   .was_free
+    ; not free: stop previous fx from repeating
+    exg.l  d1,a0
+    clr.w  ss_current_repeat(a0)
+    exg.l  a0,d1
+.was_free
+    move.l  a0,(a1,d0.w)
     move.w  #0,ss_current_vbl(a0)  ; reset loop VBL timer TEMP 10/50s...
     move.w  ss_nb_repeats(a0),ss_current_repeat(a0)   ; set number of repeats
-    move.l  (a7)+,d0
-    move.l  (a7)+,a1
+.out
+    movem.l  (a7)+,d0-d1/a1
     rts
     
 stop_loop_fx
-    move.w   #0,ss_current_repeat(a0)  ; stop loop counter
+    move.w  d0,-(a7)
+    clr.w   ss_current_repeat(a0)  ; stop loop counter
+    moveq.l #0,d0
+    move.b  ss_channel(a0),d0
+    bmi.b   .nope
+    move.w  d1,-(a7)
+    moveq   #0,d1
+    bset    d0,d1
+    lea _custom,a0
+    move.w  d1,dmacon(a0)
+    move.w  (a7)+,d1
+.nope
+    
+    move.w  (a7)+,d0
     rts
     
 ; custom addition to ptplayer: ability to loop sound several times or infinite
 update_sound_loops:
-    lea loop_list(pc),a1
+    lea loop_array(pc),a1
     ; check timers
+    moveq.w #3,d2
+    
 .ulloop
     move.l  (a1)+,d0
-    beq.b   .done
+    beq.b   .next
     move.l  d0,a0
     ; check timer: do we need to play again?
     move.w  ss_current_vbl(a0),d0
     beq.b   .played
     subq.w  #1,d0       ; decrease
     move.w  d0,ss_current_vbl(a0)
-    bra.b   .ulloop ; next
+    bra.b   .next
 .played:
     ; ended playing, do we need to play again?
     tst.w   ss_current_repeat(a0)
     bmi.b   .play
-    beq.b   .ulloop ; no more repeats
+    beq.b   .next ; no more repeats
     subq.w  #1,ss_current_repeat(a0)
 .play
     move.w  ss_vbl_length(a0),ss_current_vbl(a0)  ; reset loop VBL timer TEMP 10/50s...
     bsr play_fx
-    bra.b   .ulloop
-.done
+.next
+    dbf d2,.ulloop
     rts
+
+start_background_loop
+    move.w  loop_index(pc),d0
+    add.w   d0,d0
+    add.w   d0,d0
+    lea     loop_table(pc),a0
+    move.l  (a0,d0.w),a0    ; current loop sound
+    bra play_loop_fx
+
+
+stop_background_loop:
+    move.w  loop_index(pc),d0
+    add.w   d0,d0
+    add.w   d0,d0
+    lea     loop_table(pc),a0
+    move.l  (a0,d0.w),a0    ; current loop sound
+    bsr stop_loop_fx
+    ; also stop fright / eyes
+    lea loop_eyes_sound(pc),a0
+    bsr stop_loop_fx
+    lea loop_fright_sound(pc),a0
+    bra stop_loop_fx
     
+    
+    
+       
 ;base addr, len, per, vol, channel<<8 + pri, loop timer, number of repeats (or -1), current repeat, current vbl
 
 FXFREQBASE = 3579564
@@ -4578,16 +4725,22 @@ SOUND_ENTRY:MACRO
     ds.b    \1_sound_end-\1_sound+Sound_SIZEOF,0
     ENDM
     
-    SOUND_ENTRY killed,0,$FF
-    SOUND_ENTRY credit,0,$FF
-    SOUND_ENTRY extra_life,10,$FF
-    SOUND_ENTRY ghost_eaten,0,$FF
-    SOUND_ENTRY bonus_eaten,0,$FF
-    SOUND_ENTRY eat_1,0,$FF
-    SOUND_ENTRY eat_2,0,$FF
+    SOUND_ENTRY killed,0,1
+    SOUND_ENTRY credit,0,1
+    SOUND_ENTRY extra_life,10,1
+    SOUND_ENTRY ghost_eaten,0,2
+    SOUND_ENTRY bonus_eaten,0,3
+    SOUND_ENTRY eat_1,0,3
+    SOUND_ENTRY eat_2,0,3
+    SOUND_ENTRY loop_1,-1,0
+    SOUND_ENTRY loop_fright,-1,0
+    SOUND_ENTRY loop_eyes,-1,0
     dc.l    0
-loop_list:
-    dc.l    0,0,0,0,0,0,0,0
+    
+loop_table:
+    dc.l    loop_1_sound,loop_1_sound,loop_1_sound,loop_1_sound
+loop_index
+    dc.w    0
     
 ; number of dots remaining, triggers elroy1 mode
 elroy_table:
@@ -4613,6 +4766,7 @@ elroy_table:
     dc.b    120
     dc.b    120
 
+    even
  ; speed table at 60 Hz. Not compatible with 50 Hz if we want roughly same speed
 speed_table:  ; lifted from https://github.com/shaunlebron/pacman/blob/master/src/Actor.js
     dc.l    speeds_level1,speeds_level2_4,speeds_level2_4,speeds_level2_4
@@ -4743,7 +4897,7 @@ game_palette
     
 player:
     ds.b    Player_SIZEOF
-
+    even
 ghosts:
 red_ghost:      ; needed by cyan ghost
     ds.b    Ghost_SIZEOF
@@ -4763,6 +4917,9 @@ HWSPR_TAB_YPOS:
 
 dot_table
     ds.b    NB_TILES_PER_LINE*NB_TILE_LINES
+    
+    even
+    
     SECTION  S3,CODE
     include ptplayer.s
 
@@ -4912,6 +5069,7 @@ bonus_scores:
     incbin  "bonus_scores_2.bin"    ; 500
     incbin  "bonus_scores_3.bin"    ; 700
 
+    even
 black_sprite:
     dc.l    0   ; control word
     REPT    16
@@ -5063,6 +5221,19 @@ eat_2_raw
     incbin  "eat_2.raw"
     even
 eat_2_raw_end
+loop_1_raw
+    incbin  "loop_1.raw"
+    even
+loop_1_raw_end
+loop_fright_raw
+    incbin  "loop_fright.raw"
+    even
+loop_fright_raw_end
+loop_eyes_raw
+    incbin  "loop_eyes.raw"
+    even
+loop_eyes_raw_end
+
     
 empty_sprite
     dc.l    0,0
