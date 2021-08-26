@@ -1,30 +1,30 @@
 bugs:
 
-- sometimes pac too fast when taking power pill at some point.
-- sometimes all pills taken but no level end
+- 68000 crash
+- sometimes pac too fast when taking power pill (eating a ghost?) at some point.
+- sometimes all pills taken but no level end: DEBUG!!
 - pac leaving a few pixels behind
 - ghosts show where they're going too late (missing one tile?)
-- fruit/ready not reset when life is lost
+- ready not reset when life is lost
+- fruit score not displayed (second fruit)
 - 2 cyan ghosts at some point because of score color 200+400? always reset ghost palettes after score display
 - test / display ghosts targets with extra sprite (except red)
 - cookie cut for bonuses ou autre solution???
-- in the end infinite scatter for all ghosts: should be fixed
-- remove bonus doesn't work well
-- score for bonus doesn't disappear: ??? pas vrai? random?
+- pt player sample play issues
 
 random bugs:
 
 - pacman corruption left/upper
 - to right: pacman trashed mem corruption???
 - score goes berzerk
+- pacman traverses ghosts in fright mode
 
 todo:
 
-- end of level: clear screen (pacman pos)
-- black tunnel mask OR sprite shifter
+- extra life: test & redraw
+- black tunnel mask => sprite shifter
 - leave pen behaviour after a life is lost
 - elroy behaviour after a life is lost
 - intermission sequences
 - sound
-- cheat keys! levelskip, add 1 life, invincible
 - restart after game over

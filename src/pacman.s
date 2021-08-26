@@ -104,6 +104,8 @@ MODE_CHASE = 20
 MODE_FRIGHT = 30
 MODE_EYES = 40
 
+EXTRA_LIFE_SCORE = 10000/10  ; TEMP
+
 ; actual nb ticks (PAL)
 NB_TICKS_PER_SEC = 50
 ; game logic ticks
@@ -309,17 +311,18 @@ Start:
     move.w #0,bpl1mod(a5)                ; modulo de tous les plans = 40
     move.w #0,bpl2mod(a5)
 
+intro:
     bsr hide_sprites
 
     bsr clear_screen
     
     bsr draw_score
 
-    move.w  #0,intro_timer
+    move.w  #0,state_timer
 
     bsr wait_bof
     ; init sprite, bitplane, whatever dma
-    move.w #$83EF,dmacon(a5)
+    move.w #$83E0,dmacon(a5)
     move.w #INTERRUPTS_ON_MASK,intena(a5)    ; enable level 6!!
     
 .intro_loop
@@ -331,7 +334,7 @@ Start:
     btst    #JPB_BTN_RED,d0
     beq.b   .intro_loop
 .out_intro    
-    clr.w   intro_timer
+    clr.w   state_timer
     move.w  #STATE_GAME_START_SCREEN,current_state
 .release
     move.l  joystick_state(pc),d0
@@ -339,7 +342,7 @@ Start:
     bne.b   .release
 
     lea credit_sound(pc),a0
-    bsr play_loop_fx
+    bsr play_fx
 
 .game_start_loop
     move.l  joystick_state(pc),d0
@@ -352,12 +355,12 @@ Start:
 .restart    
     lea _custom,a5
     move.w  #$7FFF,(intena,a5)
-    bsr clear_screen
-    bsr draw_score
     
     bsr init_new_play
 
 .new_level  
+    bsr clear_screen
+    bsr draw_score
     bsr init_level
     lea _custom,a5
     move.w  #$7FFF,(intena,a5)
@@ -380,11 +383,16 @@ Start:
     bsr hide_sprites
 
     ; enable copper interrupts, mainly
-
+    moveq.l #0,d0
+    bra.b   .from_level_start
 .new_life
-    bsr wait_bof
+    moveq.l #1,d0
+.from_level_start
     bsr init_ghosts
     bsr init_player
+    
+    bsr wait_bof
+
     bsr draw_lives
     move.w  #STATE_PLAYING,current_state
     move.w #INTERRUPTS_ON_MASK,intena(a5)
@@ -395,7 +403,7 @@ Start:
     
 .game_start_screen
 .intro_screen       ; not reachable from mainloop
-    blitz
+    bra.b   intro
 .playing
 .level_completed
     bra.b   .mainloop
@@ -407,6 +415,8 @@ Start:
 .life_lost
     sub.b   #1,nb_lives
     bne.b   .new_life
+    ; 3 seconds
+    move.w  #ORIGINAL_TICKS_PER_SEC*3,state_timer
     move.w  #STATE_GAME_OVER,current_state
     bra.b   .game_over
 .out      
@@ -459,6 +469,7 @@ clear_screen
 init_new_play:
     ; global init at game start
     move.b  #3,nb_lives
+    clr.b   extra_life_awarded
     move.w  #0,level_number
     move.l  #0,score
     move.l  #0,displayed_score
@@ -565,7 +576,10 @@ set_normal_ghost_palette
 ; Starting at level three, all the ghosts have a dot limit of zero for the remainder of the game and
 ; will leave the ghost house immediately at the start of every level.
 
+; < D0: 0 if start of a level, 1 if a life has been lost
+
 init_ghosts
+    move.b  d0,d4
     lea ghosts(pc),a0
     lea ghost_sprites,a1   ; the sprite part of the copperlist, sprite 1-7 are the ghost sprites
     lea .behaviour_table(pc),a2
@@ -591,12 +605,15 @@ init_ghosts
     move.l  a1,copperlist_address(a0)
     add.l   #16,a1
     
+    tst.b   d4
+    bne.b   .no_reset
     clr.w   mode_counter(a0)
     clr.w   speed_table_index(a0)
-    clr.w   pen_timer(a0)
     clr.w   pen_nb_dots(a0)
+.no_reset    
+    ; todo: pen timer
+    clr.w   pen_timer(a0)
     clr.b   reverse_flag(a0)
-
     clr.w   h_speed(a0)
     clr.w   v_speed(a0)
     clr.w   target_xtile(a0)
@@ -820,11 +837,12 @@ update_ghost_target
 ; trashes: nothing
 update_ghost_mode_timer
     movem.l d0/a1,-(a7)
-    move.w  level_number,d0
+    move.w  level_number(pc),d0
     cmp.w   #4,d0
     bcs.b   .low
     move.w  #4,d0
 .low
+    add.w   d0,d0
     add.w   d0,d0
     lea     timer_table(pc),a1
     move.l  (a1,d0.w),a1
@@ -836,7 +854,10 @@ update_ghost_mode_timer
     rts
     
 init_player
-    clr.w   bonus_clear_message
+    ; in case player was killed / level completed 
+    ; when bonus was active
+    bsr remove_bonus
+    bsr remove_bonus_score
     
     lea player(pc),a0
     move.l  #'PACM',character_id(a0)
@@ -854,6 +875,8 @@ init_player
     move.w  #-1,player_killed_timer
     move.w  #-1,ghost_eaten_timer
     clr.w   next_ghost_score
+    clr.w   fright_timer
+    clr.b   eat_toggle
 	rts	    
 
 DEBUG_X = 8     ; 232+8
@@ -997,7 +1020,7 @@ draw_debug
     add.w  #DEBUG_X,d0
     clr.l   d2
     move.b nb_dots_eaten,d2
-    move.w  #0,d3
+    move.w  #3,d3
     bsr write_decimal_number
     ;;
     move.w  #DEBUG_X,d0
@@ -1013,6 +1036,17 @@ draw_debug
 
     bsr ghost_debug
 
+    move.w  #DEBUG_X,d0
+    add.w  #8,d1
+    lea .dottable(pc),a0
+    bsr write_string
+    lsl.w   #3,d0
+    add.w  #DEBUG_X,d0
+    clr.l   d2
+    move.l #dot_table,d2
+    move.w  #8,d3
+    bsr write_hexadecimal_number
+
     rts
     
 .px
@@ -1023,12 +1057,14 @@ draw_debug
         dc.b    "DOTS ",0
 .bonus
         dc.b    "BT ",0
-
+.dottable:
+        dc.b    "DTA !",0
         even
 
 draw_ghosts:
     tst.w  ghost_eaten_timer
     bmi.b   .no_ghost_eat
+
     bsr hide_ghost_sprites
     
     ; store score
@@ -1162,7 +1198,7 @@ draw_all
     bra.b   draw_intro_screen
     
 .game_start_screen
-    tst.w   intro_timer
+    tst.w   state_timer
     beq.b   draw_start_screen
     rts
     
@@ -1211,9 +1247,9 @@ draw_all
     move.w  fruit_score_index(pc),d0
     bsr draw_bonus_score
 .no_bonus_score_appear
-    tst.w   bonus_clear_message
+    tst.w   bonus_score_clear_message
     beq.b   .no_bonus_score_disappear
-    clr.w   bonus_clear_message
+    clr.w   bonus_score_clear_message
     move.w  #BONUS_X_POS,d0
     move.w  #BONUS_Y_POS,d1
     move.w  #4,d2
@@ -1249,10 +1285,12 @@ draw_all
     ; score
     lea	screen_data+SCREEN_PLANE_SIZE*3,a1  ; white
     
-    move.l  score,d0
-    cmp.l   displayed_score,d0
+    move.l  score(pc),d0
+    move.l  displayed_score(pc),d1
+    cmp.l   d0,d1
     beq.b   .no_score_update
     move.l  d0,d2
+    
     move.l  d0,displayed_score
 
     move.w  #232+16,d0
@@ -1260,7 +1298,7 @@ draw_all
     move.w  #6,d3
     bsr write_decimal_number
     
-    move.l  high_score,d4
+    move.l  high_score(pc),d4
     cmp.l   d2,d4
     bcc.b   .no_score_update
     ; high score
@@ -1307,6 +1345,24 @@ animate_power_dots
 .powerdot_done
     rts
     
+; < D0: score (/10)
+add_to_score:
+    add.l   d0,score
+    tst.b  extra_life_awarded
+    bne.b   .no_play
+    ; was below, check new score
+    cmp.l   #EXTRA_LIFE_SCORE,score    ; is current score above xtra life score
+    bcs.b   .no_play        ; not yet
+    
+    move.b  #1,extra_life_awarded
+    add.b   #1,nb_lives
+    move.l A0,-(a7)
+    lea extra_life_sound(pc),a0
+    bsr play_loop_fx
+    move.l  (a7)+,a0
+.no_play
+    rts
+    
 random:
     move.l  previous_random(pc),d0
 	;;; EAB simple random generator
@@ -1331,19 +1387,19 @@ DEMO_DOT_SCORE_TIMER = NB_TICKS_PER_SEC*12
 DEMO_POWER_DOT_TIMER = NB_TICKS_PER_SEC*13
 
 DRAW_GHOST_INFO:MACRO
-    cmp.w   #NB_TICKS_PER_SEC*(\2*3+1),intro_timer
+    cmp.w   #NB_TICKS_PER_SEC*(\2*3+1),state_timer
     bne.b   .no_show_\1
     moveq.l #\2,d0
     bra.b .draw_ghost_bob
 .no_show_\1
-    cmp.w   #NB_TICKS_PER_SEC*(\2*3+2),intro_timer
+    cmp.w   #NB_TICKS_PER_SEC*(\2*3+2),state_timer
     bne.b   .no_show_\1_text
     moveq.l #\2,d0
     bsr .draw_ghost_text
     move.w  d0,.nb_written
     rts
 .no_show_\1_text
-    cmp.w   #NB_TICKS_PER_SEC*(\2*3+2)+(NB_TICKS_PER_SEC/2)+1,intro_timer
+    cmp.w   #NB_TICKS_PER_SEC*(\2*3+2)+(NB_TICKS_PER_SEC/2)+1,state_timer
     bne.b   .no_show_\1_text_2
     moveq.l #\2,d0
     bra .draw_ghost_text
@@ -1400,7 +1456,7 @@ draw_start_screen
     dc.b    "c###########1980",0
     even
 draw_intro_screen
-    tst.w   intro_timer
+    tst.w   state_timer
     bne.b   .no_first
     lea character_nickname_string(pc),a0
     move.w  #X_TEXT,d0
@@ -1414,7 +1470,7 @@ draw_intro_screen
     DRAW_GHOST_INFO cyan,2
     DRAW_GHOST_INFO orange,3
 
-    cmp.w   #DEMO_DOT_SCORE_TIMER,intro_timer
+    cmp.w   #DEMO_DOT_SCORE_TIMER,state_timer
     bne.b   .no_dot_score
     lea	screen_data+DOT_PLANE_OFFSET+X_DOT/8+Y_DOT*NB_BYTES_PER_LINE,a1
     bsr draw_dot
@@ -1439,7 +1495,7 @@ draw_intro_screen
     bsr write_color_string
 .no_dot_score
 
-    cmp.w   #DEMO_POWER_DOT_TIMER,intro_timer
+    cmp.w   #DEMO_POWER_DOT_TIMER,state_timer
     bne.b   .no_power_dot
     lea	screen_data+DOT_PLANE_OFFSET+X_DEMO_POWER_DOT/8+Y_PAC_ANIM*NB_BYTES_PER_LINE,a1
     lea  powerdots(pc),a0
@@ -1461,7 +1517,7 @@ draw_intro_screen
     bsr blit_plane_any
 .no_power_dot
     
-    cmp.w   #DEMO_PACMAN_TIMER,intro_timer
+    cmp.w   #DEMO_PACMAN_TIMER,state_timer
     bcs.b   .dont_draw_characs
     ; blit pacman
     bsr draw_ghosts
@@ -1820,6 +1876,9 @@ init_interrupts
     move.l  ($6C,a0),(a1)+
     ;move.l  ($78,a0),(a1)+
     
+    lea level2_interrupt(pc),a1
+    move.l  a1,($68,a0)
+    
     lea level3_interrupt(pc),a1
     move.l  a1,($6C,a0)
     
@@ -1831,6 +1890,7 @@ finalize_sound
     sub.l   a0,a0
     lea _custom,a6
     jsr _mt_remove_cia
+    move.w  #$F,dmacon(a6)   ; stop sound
     rts
     
 restore_interrupts:
@@ -1863,6 +1923,96 @@ saved_dmacon
 saved_intena
     dc.w    0
 
+; what: level 2 interrupt (keyboard)
+; args: none
+; trashes: none
+    
+level2_interrupt:
+	movem.l	D0/A5,-(a7)
+	LEA	$00BFD000,A5
+	MOVEQ	#$08,D0
+	AND.B	$1D01(A5),D0
+	BEQ	.nokey
+	MOVE.B	$1C01(A5),D0
+	NOT.B	D0
+	ROR.B	#1,D0		; raw key code here
+
+    cmp.b   #$45,d0
+    bne.b   .no_esc
+    cmp.w   #STATE_INTRO_SCREEN,current_state
+    beq.b   .no_esc
+    move.w  #STATE_GAME_OVER,current_state
+.no_esc
+    cmp.w   #STATE_PLAYING,current_state
+    bne.b   .no_playing
+    cmp.b   #$50,d0
+    bne.b   .no_lskip
+    move.w  #STATE_LEVEL_COMPLETED,current_state
+.no_lskip
+    cmp.b   #$51,d0
+    bne.b   .no_invincible
+    eor.b   #1,invincible_cheat_flag
+    move.b  invincible_cheat_flag(pc),d0
+    beq.b   .x
+    move.w  #$F,d0
+.x
+    and.w   #$FF00,d0
+    or.w  #$0F0,d0
+    move.w  d0,_custom+color
+    bra.b   .no_playing
+.no_invincible
+    cmp.b   #$52,d0
+    bne.b   .no_teleport
+    ; teleport some ghosts to tunnels entrances
+    move.l  a0,-(a7)
+    lea ghosts(pc),a0
+    ; red
+    move.w  #X_MAX-16,xpos(a0)
+    move.w  #OTHERS_YSTART_POS,ypos(a0)
+    move.w  #RIGHT,direction(a0)
+    move.w  #1,h_speed(a0)
+    clr.w   v_speed(a0)
+    ; pink
+    add.l   #Ghost_SIZEOF,a0
+    move.w  #0,xpos(a0)
+    move.w  #OTHERS_YSTART_POS,ypos(a0)
+    move.w  #RIGHT,direction(a0)
+    move.w  #1,h_speed(a0)
+    clr.w   v_speed(a0)
+    
+    move.l  (a7)+,a0
+    bra.b   .no_playing
+.no_teleport
+    cmp.b   #$53,d0     ; F4
+    bne.b   .no_debug
+    ; show/hide debug info
+    eor.b   #1,debug_flag
+    bra.b   .no_playing
+.no_debug
+
+.no_playing
+	BSET	#$06,$1E01(A5)
+	move.l	#2,d0
+	bsr	beamdelay
+	BCLR	#$06,$1E01(A5)	; acknowledge key
+
+.nokey
+	movem.l	(a7)+,d0/a5
+	move.w	#8,_custom+intreq
+	rte
+    
+; < D0: numbers of vertical positions to wait
+beamdelay
+.bd_loop1
+	move.w  d0,-(a7)
+    move.b	$dff006,d0	; VPOS
+.bd_loop2
+	cmp.b	$dff006,d0
+	beq.s	.bd_loop2
+	move.w	(a7)+,d0
+	dbf	d0,.bd_loop1
+	rts
+
 ; what: level 3 interrupt (vblank/copper)
 ; args: none
 ; trashes: none
@@ -1878,7 +2028,10 @@ level3_interrupt:
     beq.b   .blitter
     ; copper
     bsr draw_all
+    tst.b   debug_flag
+    beq.b   .no_debug
     bsr draw_debug
+.no_debug
     bsr update_all
     move.w  vbl_counter(pc),d0
     addq.w  #1,d0
@@ -1925,9 +2078,9 @@ update_all
     bra update_intro_screen
     
 .game_start_screen
-    tst.w   intro_timer
+    tst.w   state_timer
     bne.b   .out
-    add.w   #1,intro_timer
+    add.w   #1,state_timer
 .out    
     rts
     
@@ -1959,6 +2112,11 @@ update_all
      rts
      
 .game_over
+    tst.w   state_timer
+    bne.b   .cont
+    move.w  #STATE_INTRO_SCREEN,current_state
+.cont
+    subq.w  #1,state_timer
     rts
 .playing
     tst.w   ready_timer
@@ -2030,6 +2188,8 @@ check_pac_ghosts_collisions
     cmp.w   #MODE_EYES,d0
     beq.b   .nomatch        ; ignore eyes
     ; pacman is killed
+    tst.b   invincible_cheat_flag
+    bne.b   .nomatch    
     move.w  #PLAYER_KILL_TIMER,player_killed_timer
     ; TODO stop sound loop?
 
@@ -2042,39 +2202,47 @@ a_ghost_was_eaten:
     move.w  #MODE_EYES,mode(a4)
     ; test display score with the proper color (reusing pink sprite palette)
     move.w  #GHOST_KILL_TIMER,ghost_eaten_timer
-
+    cmp.w   #STATE_PLAYING,current_state
+    bne.b   .no_sound
+    lea     ghost_eaten_sound,a0
+    bsr     play_fx
+.no_sound
+    
     move.w  next_ghost_score(pc),d0
     add.w   #1,next_ghost_score
     add.w   d0,d0
     add.w   d0,d0
     lea  score_value_table(pc),a0
-    move.l   (a0,d0.w),d1
-    add.l  d1,score
+    move.l  d0,-(a7)
+    move.l   (a0,d0.w),d0
+    bsr add_to_score
+    move.l  (a7)+,d0
     lea  score_frame_table(pc),a0
-    move.l  (a0,d0.w),d1
-    move.l  d1,score_frame
+    move.l  (a0,d0.w),d0
+    move.l  d0,score_frame
     
     ; exits as soon as a collision is found
     rts
 update_intro_screen
-    add.w   #1,intro_timer
+    add.w   #1,state_timer
     cmp.w   #4,next_ghost_score
     bne.b   .remaining_ghosts
     ; wait a while and go in press button to start game
-    move.w  intro_timer(pc),d1
-    sub.w   last_ghost_eaten_intro_timer(pc),d1
+    move.w  state_timer(pc),d1
+    sub.w   last_ghost_eaten_state_timer(pc),d1
     cmp.w   #NB_TICKS_PER_SEC,d1
     bcs.b   .wait
     ; change state
-    clr.w   intro_timer
+    clr.w   state_timer
     move.w  #STATE_GAME_START_SCREEN,current_state
 .wait
     rts
 .remaining_ghosts
-    cmp.w   #DEMO_PACMAN_TIMER,intro_timer
+    cmp.w   #DEMO_PACMAN_TIMER,state_timer
     bne.b   .no_pac_demo_anim_init
     clr.w   .skip_3_frames
     bsr init_player
+    moveq.l #0,d0
     bsr init_ghosts
     lea player(pc),a2
     clr.w   .move_period
@@ -2093,7 +2261,7 @@ update_intro_screen
     add.l   #Ghost_SIZEOF,a3
     dbf d0,.ginit
 .no_pac_demo_anim_init
-    cmp.w   #DEMO_PACMAN_TIMER,intro_timer
+    cmp.w   #DEMO_PACMAN_TIMER,state_timer
     bcs.b   .no_pac_demo_anim
     
     bsr update_power_dot_flashing
@@ -2216,7 +2384,7 @@ update_intro_screen
     move.w  #MODE_EYES,mode(a3)
     move.w  #X_MAX*2,xpos(a3)   ; hidden
     bsr a_ghost_was_eaten
-    move.w  intro_timer,last_ghost_eaten_intro_timer
+    move.w  state_timer,last_ghost_eaten_state_timer
     bra.b   .storex
 .no_eat
     add.w   #Ghost_SIZEOF,a3
@@ -3079,6 +3247,14 @@ update_pac
     ; should not happen!!
     bra.b   .score
 .simple
+    eor.b   #1,eat_toggle
+    beq.b   .s2
+    lea eat_1_sound(pc),a0
+    bra.b   .scont
+.s2
+    lea eat_2_sound(pc),a0
+.scont
+    bsr play_fx
     move.b  #1,still_timer(a4)      ; still during 1 frame
     bsr clear_dot
 .score
@@ -3115,11 +3291,13 @@ update_pac
     add.w   d2,d2
     move.w  (a0,d2.w),d0
     ext.l   d0
-    add.l   d0,score
+    bsr     add_to_score
 .end_pac
     rts
 .bonus_eaten:
     bsr remove_bonus
+    lea bonus_eaten_sound(pc),a0
+    bsr play_fx
     ; show score
     move.w  #BONUS_SCORE_TIMER_VALUE,bonus_score_timer
     bra.b   .other
@@ -3305,6 +3483,7 @@ draw_pacman:
     ; first roughly clear some pacman zones that can remain. We don't test the directions
     ; just clear every possible pixel that could remain whatever the direction was/is
     move.l  previous_pacman_address(pc),a3
+    clr.l   (-NB_BYTES_PER_LINE,a3)
     clr.l   (a3)
     clr.l   (NB_BYTES_PER_LINE,a3)
     clr.l   (NB_BYTES_PER_LINE*2,a3)
@@ -3316,6 +3495,7 @@ draw_pacman:
     clr.l   (NB_BYTES_PER_LINE*9,a3)
     clr.l   (NB_BYTES_PER_LINE*15,a3)
     clr.l   (NB_BYTES_PER_LINE*16,a3)
+    clr.l   (NB_BYTES_PER_LINE*17,a3)
 
     bsr blit_plane
     ; A1 is start of dest, use it to clear upper part and lower part
@@ -3882,9 +4062,10 @@ bonus_level_score:  ; *10
     dc.w    10,30,50,50,70,70,100,100,200,200,300,300,500
 bonus_timer:
     dc.w    0
-intro_timer:
+; general purpose timer for non-game states (intro, game over...)
+state_timer:
     dc.w    0
-last_ghost_eaten_intro_timer
+last_ghost_eaten_state_timer
     dc.w    0
 fruit_score_index:
     dc.w    0
@@ -3920,6 +4101,14 @@ maze_blink_nb_times
 nb_lives
     dc.b    0
 nb_dots_eaten
+    dc.b    0
+invincible_cheat_flag
+    dc.b    0
+debug_flag
+    dc.b    0
+extra_life_awarded
+    dc.b    0
+eat_toggle
     dc.b    0
 elroy_threshold_1
     dc.b    0
@@ -4277,11 +4466,9 @@ get_elroy_level:
 .out
     rts
 .level1
-   move.w  #$F0,$dff180
     moveq   #1,d0
     rts
 .level2
-    move.w  #$F00,$dff180
     moveq   #2,d0
     rts
 ; < A0: ghost structure
@@ -4325,6 +4512,8 @@ play_fx
 
 ; < A0: sound struct
 play_loop_fx
+    move.l  a1,-(a7)
+    move.l  d0,-(a7)
     lea loop_list(pc),a1
     ; find a free slot or the same slot
 .ffloop
@@ -4338,10 +4527,12 @@ play_loop_fx
     move.l  a0,(a1)
     move.w  #0,ss_current_vbl(a0)  ; reset loop VBL timer TEMP 10/50s...
     move.w  ss_nb_repeats(a0),ss_current_repeat(a0)   ; set number of repeats
+    move.l  (a7)+,d0
+    move.l  (a7)+,a1
     rts
     
 stop_loop_fx
-    move.w   #-1,12(a0)  ; stop loop counter
+    move.w   #0,ss_current_repeat(a0)  ; stop loop counter
     rts
     
 ; custom addition to ptplayer: ability to loop sound several times or infinite
@@ -4379,14 +4570,24 @@ SOUNDFREQ = 22050
 SOUND_ENTRY:MACRO
 \1_sound
     dc.l    \1_raw
-    dc.w    (\1_raw_end-\1_raw)/2,FXFREQBASE/SOUNDFREQ,64,$FF01,\2,0,NB_TICKS_PER_SEC*(\1_raw_end-\1_raw)/SOUNDFREQ,0
+    dc.w    (\1_raw_end-\1_raw)/2,FXFREQBASE/SOUNDFREQ,64
+    dc.b    \3
+    dc.b    $01
+    dc.w    \2,0,NB_TICKS_PER_SEC*(\1_raw_end-\1_raw)/SOUNDFREQ
+\1_sound_end
+    ds.b    \1_sound_end-\1_sound+Sound_SIZEOF,0
     ENDM
     
-    SOUND_ENTRY killed,0
-    SOUND_ENTRY credit,0
-
+    SOUND_ENTRY killed,0,$FF
+    SOUND_ENTRY credit,0,$FF
+    SOUND_ENTRY extra_life,10,$FF
+    SOUND_ENTRY ghost_eaten,0,$FF
+    SOUND_ENTRY bonus_eaten,0,$FF
+    SOUND_ENTRY eat_1,0,$FF
+    SOUND_ENTRY eat_2,0,$FF
+    dc.l    0
 loop_list:
-    ds.l    10,0
+    dc.l    0,0,0,0,0,0,0,0
     
 ; number of dots remaining, triggers elroy1 mode
 elroy_table:
@@ -4841,6 +5042,27 @@ credit_raw
     incbin  "credit.raw"
     even
 credit_raw_end
+
+ghost_eaten_raw
+    incbin  "ghost_eaten.raw"
+    even
+ghost_eaten_raw_end
+bonus_eaten_raw
+    incbin  "bonus_eaten.raw"
+    even
+bonus_eaten_raw_end
+extra_life_raw
+    incbin  "extra_life.raw"
+    even
+extra_life_raw_end
+eat_1_raw
+    incbin  "eat_1.raw"
+    even
+eat_1_raw_end
+eat_2_raw
+    incbin  "eat_2.raw"
+    even
+eat_2_raw_end
     
 empty_sprite
     dc.l    0,0
