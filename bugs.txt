@@ -1,28 +1,29 @@
 bugs:
 
+- tunnel x=0: pacman ne traverse plus
+- mode issue still there (endless scatter)
 - sometimes pac too fast when taking power pill (eating a ghost?) at some point.
-- sometimes all pills taken but no level end: DEBUG!!
+- all pills taken but no level end: number of dots 242!!!!
 - pac leaving a few pixels behind
 - ghosts show where they're going too late (missing one tile?)
-- test / display ghosts targets with extra sprite
-- cookie cut for bonuses ou autre solution???: redraw OR plane with CPU!!!
-- pt player sample play issues
-- tunnel x=0: pacman ne traverse plus
+- pt player sample play issues: yes but covered by sound loop!!
 - black tunnel mask => sprite shifter
+- white fright palette in demo mode
 
 random bugs:
 
-- pacman corruption left/upper
-- to right: pacman trashed mem corruption???
-- pacman traverses ghosts in fright mode
-- fruit score not displayed (second fruit)
+- pacman traverses ghosts sometimes
+- fruit score not displayed
 
 todo:
 
+- credit sound only if fire pressed
 - extra life: test & redraw: watch video
 - leave pen behaviour after a life is lost
 - elroy behaviour after a life is lost
 - intermission sequences
-- sound loop increase freq number of dots eaten
+- sound loop increase freq number of dots eaten 0 $40 $80 $C0 $E0 (au pif)
+- test / display ghosts targets with extra sprite (debug mode)
+- start music
 
 

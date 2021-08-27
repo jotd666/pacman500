@@ -370,6 +370,7 @@ intro:
     ; do it first, as the last bonus overwrites bottom left of screen
     bsr draw_bonuses    
     bsr draw_maze
+
     ; compute tunnel position sprite
     move.w  #TUNNEL_MASK_X,d0
     move.w  #TUNNEL_MASK_Y,d1
@@ -455,6 +456,20 @@ wait_bof
 	move.l	(a7)+,d0
 	rts    
     
+clear_debug_screen
+    movem.l d0-d1/a1,-(a7)
+    lea	screen_data+SCREEN_PLANE_SIZE*3,a1 
+    move.w  #NB_LINES-1,d1
+.c0
+    move.w  #NB_BYTES_PER_MAZE_LINE/4-1,d0
+.cl
+    clr.l   (a1)+
+    dbf d0,.cl
+    add.w   #NB_BYTES_PER_LINE-NB_BYTES_PER_MAZE_LINE,a1
+    dbf d1,.c0
+    movem.l (a7)+,d0-d1/a1
+    rts
+    
 clear_screen
     lea screen_data,a1
     moveq.l #3,d0
@@ -472,6 +487,7 @@ init_new_play:
     ; global init at game start
     move.b  #3,nb_lives
     clr.b   extra_life_awarded
+    clr.b    music_played
     move.w  #0,level_number
     move.l  #0,score
     move.l  #0,displayed_score
@@ -497,8 +513,8 @@ init_level:
     move.w  (a0,d2.w),fruit_score
     lea bonus_level_table(pc),a0
     move.w  (a0,d2.w),fruit_score_index
-    move.b  #0,nb_dots_eaten
-    
+    clr.b  nb_dots_eaten
+    clr.b   previous_nb_dots_eaten
     ; speed table
     add.w   d2,d2
     lea speed_table(pc),a1
@@ -522,11 +538,15 @@ draw_score:
     move.w  #232,d0
     move.w  #48,d1
     bsr write_string
+    
+    ; extra 0
     lea score_string(pc),a0
     move.w  #232,d0
     add.w  #8,d1
     bsr write_string
-    rts
+
+    move.l  high_score(pc),d2
+    bra     write_high_score
     
 hide_sprites:
     move.w  #7,d1
@@ -872,13 +892,34 @@ init_player
     clr.w   prepost_turn(a0)
     clr.b   still_timer(a0)
     move.w  #0,frame(a0)
-    move.w  #NB_TICKS_PER_SEC,ready_timer
+    move.w  #ORIGINAL_TICKS_PER_SEC,D0   
+    tst.b   music_played
+    bne.b   .played
+    st.b    music_played
+    moveq.l #0,d0
+    move.w  music_1_sound+ss_vbl_length,d0
+    ; 50 => 60 hz conv
+    divu.w  #5,d0
+    swap    d0
+    clr.w   d0
+    swap    d0
+    mulu.w  #6,d0
+    swap    d0
+    clr.w   d0
+    swap    d0
+    
+    move.w  d0,first_ready_timer
+.played
+    move.w  d0,ready_timer
     clr.l   previous_random
     move.w  #-1,player_killed_timer
     move.w  #-1,ghost_eaten_timer
     clr.w   next_ghost_score
     clr.w   fright_timer
     clr.b   eat_toggle
+    
+    bsr get_bonus_pac_plane
+    
 	rts	    
 
 DEBUG_X = 8     ; 232+8
@@ -951,7 +992,7 @@ ghost_debug
     swap    d2
     clr.w   d2
     swap    d2
-    move.w  #3,d3
+    move.w  #4,d3
     bsr write_decimal_number
     
     move.w  #DEBUG_X,d0
@@ -1021,7 +1062,7 @@ draw_debug
     lsl.w   #3,d0
     add.w  #DEBUG_X,d0
     clr.l   d2
-    move.b nb_dots_eaten,d2
+    move.b nb_dots_eaten(pc),d2
     move.w  #3,d3
     bsr write_decimal_number
     ;;
@@ -1167,7 +1208,7 @@ draw_ghosts:
     bclr    #0,d2   ; even
     add.w   d2,d2       ; times 2
 .end_anim
-    ; directly change color registers for that sprite FUCK
+    ; directly change color registers for that sprite
     move.l  color_register(a0),a3
     move.l  (a2)+,(a3)+
     move.l  (a2)+,(a3)+
@@ -1212,6 +1253,7 @@ draw_all
     rts
     
 .game_over
+    bsr clear_bonus
     move.w  #72,d0
     move.w  #136,d1
     move.w  #$0f00,d2   ; red
@@ -1242,8 +1284,7 @@ draw_all
     bsr draw_ghosts
 
     bsr draw_pacman
-    
-    
+        
     ; timer not running, animate
     bsr animate_power_dots
 
@@ -1277,15 +1318,7 @@ draw_all
     beq.b   .no_fruit_disappear
     clr.w   bonus_clear_message
     
-    move.w  #BONUS_X_POS,d0
-    move.w  #BONUS_Y_POS,d1
-    move.w  #4,d2
-    lea	screen_data,a1
-    move.w  #3,d3
-.cloop
-    bsr clear_plane_any
-    add.l  #SCREEN_PLANE_SIZE,a1
-    dbf d3,.cloop
+    bsr clear_bonus
 .no_fruit_disappear
     ; score
     lea	screen_data+SCREEN_PLANE_SIZE*3,a1  ; white
@@ -1308,15 +1341,26 @@ draw_all
     bcc.b   .no_score_update
     ; high score
     move.l  d2,high_score
-    move.w  #232+16,d0
-    move.w  #24+32,d1
-    move.w  #6,d3
-    bsr write_decimal_number
+    bsr write_high_score
 .no_score_update
+    tst.w   bonus_timer
+    beq.b   .no_bonus_redraw
+    cmp.w   #BONUS_Y_POS+Y_START+8,player+ypos
+    bne.b   .no_bonus_redraw
+    bsr wait_blit       ; wait for pacman to draw
+    bsr draw_bonus_pac_plane        ; TEMP
+.no_bonus_redraw
 .draw_complete
     rts
 
-animate_power_dots
+; < D2: highscore
+write_high_score
+    move.w  #232+16,d0
+    move.w  #24+32,d1
+    move.w  #6,d3
+    bra write_decimal_number
+    
+animate_power_dots    
     move.w  power_dot_timer(pc),d0
     cmp.w   #1,d0
     bcc.b   .nospd
@@ -1527,6 +1571,7 @@ draw_intro_screen
     ; blit pacman
     bsr draw_ghosts
     bsr draw_pacman
+    
     ; animate dots
     bsr animate_power_dots
 .dont_draw_characs    
@@ -1700,26 +1745,91 @@ draw_bonuses:
     
     rts
     
+; what: prepare aligned longwords to restore
+; bonus plane eaten by pacman
+; we'll use cpu OR, and not blitter
+get_bonus_pac_plane:
+    movem.l d0-d3/a0-a1,-(a7)
+
+    move.w  level_number(pc),d0
+    cmp.w   #12,d0
+    bcs.b   .ok
+    move.w  #12,d0  ; maxed 
+.ok
+    add.w   d0,d0
+    lea bonus_level_table(pc),a0
+    move.w  (a0,d0.w),d3      ; bonus index * 320
+
+    ; fixed fruit pos
+    lea bonus_plane_cached+1(pc),a1
+    
+    mulu.w  #10,d3
+    swap    d3
+    clr     d3
+    swap    d3
+    lsl.l   #5,d3
+    lea bonus_pics+64,a0
+    add.l   d3,a0    ; bonus second bitplane
+
+    ; 2 byte writes to avoid odd word write
+    REPT    16
+    move.b  (REPTN*4,a0),(4*REPTN,a1)
+    move.b  (REPTN*4+1,a0),(4*REPTN+1,a1)
+    ENDR
+    movem.l (a7)+,d0-d3/a0-a1
+    rts
+
+bonus_plane_cached
+    ds.l    16,0
+        
+; what: restore bonus plane (or'ing) when pacman is around
+
+draw_bonus_pac_plane
+    movem.l d0/a0-a1,-(a7)
+
+    ; fixed fruit pos
+    lea bonus_plane_cached(pc),a0
+    lea screen_data+SCREEN_PLANE_SIZE+BONUS_X_POS/8+BONUS_Y_POS*NB_BYTES_PER_LINE-1,a1  ; -1: even
+    
+    REPT    16
+    move.l  (REPTN*4,a0),d0
+    or.l  d0,(NB_BYTES_PER_LINE*REPTN,a1)
+    ENDR
+    movem.l (a7)+,d0/a0-a1
+    rts
+    
+clear_bonus:
+    move.w  #BONUS_X_POS,d0
+    move.w  #BONUS_Y_POS,d1
+    move.w  #4,d2
+    lea	screen_data,a1
+    move.w  #3,d3
+.cloop
+    bsr clear_plane_any
+    add.l  #SCREEN_PLANE_SIZE,a1
+    dbf d3,.cloop
+    rts
+    
 ; < D0: X
 ; < D1: Y
 ; < D2: level number
 
-draw_bonus
+draw_bonus:
     movem.l d0-d3/a0-a1,-(a7)
     cmp.w   #12,d2
     bcs.b   .ok
     move.w  #12,d2  ; maxed 
 .ok
     add.w   d2,d2
-    lea bonus_level_table,a0
-    move.w  (a0,d2.w),d3      ; bonus index * 320
-    mulu.w  #10,d3
-    swap    d3
-    clr     d3
-    swap    d3
-    lsl.l   #5,d3
+    lea bonus_level_table(pc),a0
+    move.w  (a0,d2.w),d3      ; bonus index
+    lea mul40_table(pc),a1
+    add.w   d3,d3
+    add.w   d3,d3
+    move.w  (a1,d3.w),d3    ; *40
+    lsl.w   #3,d3           ; *8 => * 320
     lea bonus_pics,a0
-    add.l   d3,a0    ; bonus bitplanes
+    add.w   d3,a0    ; bonus bitplanes
     bsr blit_4_planes
     movem.l (a7)+,d0-d3/a0-a1
     rts
@@ -2025,8 +2135,16 @@ level2_interrupt:
     bne.b   .no_debug
     ; show/hide debug info
     eor.b   #1,debug_flag
+    ; clear left part of white plane screen
+    bsr     clear_debug_screen
     bra.b   .no_playing
 .no_debug
+    cmp.b   #$54,d0     ; F4
+    bne.b   .no_bonus
+    move.b  #3,dot_table+BONUS_OFFSET
+    move.w  #BONUS_TIMER_VALUE,bonus_timer
+    bra.b   .no_playing
+.no_bonus
 
 .no_playing
 	BSET	#$06,$1E01(A5)
@@ -2161,6 +2279,12 @@ update_all
     subq.w  #1,state_timer
     rts
 .playing
+    move.w   first_ready_timer(pc),d0
+    cmp.w   ready_timer(pc),d0
+    bne.b   .no_first_tick
+    lea     music_1_sound(pc),a0
+    bsr play_fx
+.no_first_tick
     tst.w   ready_timer
     bmi.b   .ready_off
     bne.b   .dec
@@ -3382,12 +3506,32 @@ update_pac
     cmp.b   #170,d4
     beq.b   .show_fruit
 .skip_fruit_test
+    move.b  d4,nb_dots_eaten
+
+    ; ------
+    ; DEBUG
+    cmp.b   previous_nb_dots_eaten,d4
+    bcc.b   .OKK
+    blitz
+.OKK
+    move.w  d4,-(a7)
+    sub.b   previous_nb_dots_eaten,d4
+    cmp.b   #1,d4
+    beq.b   .OKK2
+    move.b  nb_dots_eaten,d4
+    blitz
+    nop
+.OKK2
+    move.w  (a7)+,d4
+    
+    move.b  d4,previous_nb_dots_eaten    
+    ; DEBUG ------
     cmp.b   #TOTAL_NUMBER_OF_DOTS,d4
     bne.b   .other
     ; no more dots: win
     move.w  #STATE_LEVEL_COMPLETED,current_state
 .other
-    move.b  d4,nb_dots_eaten
+   
     lea score_table(pc),a0
     add.w   d2,d2
     move.w  (a0,d2.w),d0
@@ -4139,7 +4283,9 @@ previous_random
     dc.l    0
 joystick_state
     dc.l    0
-ready_timer
+ready_timer:
+    dc.w    0
+first_ready_timer:
     dc.w    0
 level_blink_timer
     dc.w    0
@@ -4203,11 +4349,15 @@ nb_lives
     dc.b    0
 nb_dots_eaten
     dc.b    0
+previous_nb_dots_eaten
+    dc.b    0
 invincible_cheat_flag
     dc.b    0
 debug_flag
     dc.b    0
 extra_life_awarded
+    dc.b    0
+music_played
     dc.b    0
 eat_toggle
     dc.b    0
@@ -4725,6 +4875,7 @@ SOUND_ENTRY:MACRO
     ds.b    \1_sound_end-\1_sound+Sound_SIZEOF,0
     ENDM
     
+    ; radix,repeats (0: none, -1: infinite) ,channel (0-3)
     SOUND_ENTRY killed,0,1
     SOUND_ENTRY credit,0,1
     SOUND_ENTRY extra_life,10,1
@@ -4735,6 +4886,8 @@ SOUND_ENTRY:MACRO
     SOUND_ENTRY loop_1,-1,0
     SOUND_ENTRY loop_fright,-1,0
     SOUND_ENTRY loop_eyes,-1,0
+    SOUND_ENTRY music_1,0,0
+
     dc.l    0
     
 loop_table:
@@ -5205,6 +5358,11 @@ ghost_eaten_raw
     incbin  "ghost_eaten.raw"
     even
 ghost_eaten_raw_end
+music_1_raw
+    incbin  "music_1.raw"
+    even
+music_1_raw_end
+
 bonus_eaten_raw
     incbin  "bonus_eaten.raw"
     even
