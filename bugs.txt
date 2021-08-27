@@ -1,9 +1,7 @@
 bugs:
 
-- tunnel x=0: pacman ne traverse plus
 - mode issue still there (endless scatter)
 - sometimes pac too fast when taking power pill (eating a ghost?) at some point.
-- all pills taken but no level end: number of dots 242!!!!
 - pac leaving a few pixels behind
 - ghosts show where they're going too late (missing one tile?)
 - pt player sample play issues: yes but covered by sound loop!!
@@ -13,7 +11,7 @@ bugs:
 random bugs:
 
 - pacman traverses ghosts sometimes
-- fruit score not displayed
+- fruit score not displayed sometimes (but noise works)
 
 todo:
 
@@ -24,6 +22,5 @@ todo:
 - intermission sequences
 - sound loop increase freq number of dots eaten 0 $40 $80 $C0 $E0 (au pif)
 - test / display ghosts targets with extra sprite (debug mode)
-- start music
 
 

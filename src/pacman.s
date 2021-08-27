@@ -145,7 +145,10 @@ X_START = 16
 Y_START = 24
 ; tunnel max
 X_MAX = (NB_TILES_PER_LINE-1)*8
-
+; tunnel min (pacman)
+; used to be 0 but now for some reason it doesn't work
+; so 4 is all right ATM
+X_MIN = 4
 RED_YSTART_POS = 92+Y_START
 RED_XSTART_POS = 112+X_START
 OTHERS_YSTART_POS = RED_YSTART_POS+24
@@ -514,7 +517,6 @@ init_level:
     lea bonus_level_table(pc),a0
     move.w  (a0,d2.w),fruit_score_index
     clr.b  nb_dots_eaten
-    clr.b   previous_nb_dots_eaten
     ; speed table
     add.w   d2,d2
     lea speed_table(pc),a1
@@ -1065,6 +1067,20 @@ draw_debug
     move.b nb_dots_eaten(pc),d2
     move.w  #3,d3
     bsr write_decimal_number
+    ; ---
+    move.w  #DEBUG_X,d0
+    add.w  #8,d1
+    lea .dots2(pc),a0
+    bsr write_string
+    lsl.w   #3,d0
+    add.w  #DEBUG_X,d0
+    move.l  d0,d3
+    bsr count_dots
+    move.l  #TOTAL_NUMBER_OF_DOTS,d2
+    sub.b d0,d2
+    move.l  d3,d0   
+    move.w  #3,d3
+    bsr write_decimal_number
     ;;
     move.w  #DEBUG_X,d0
     add.w  #8,d1
@@ -1097,7 +1113,9 @@ draw_debug
 .py
         dc.b    "PY ",0
 .dots
-        dc.b    "DOTS ",0
+        dc.b    "DOTC1 ",0
+.dots2
+        dc.b    "DOTC2 ",0
 .bonus
         dc.b    "BT ",0
 .dottable:
@@ -1836,7 +1854,11 @@ draw_bonus:
     
 draw_maze:
     lea game_palette(pc),a0
-    move.w  (2,a0),maze_color     ; save original maze color
+    move.w  (2,a0),d0
+    move.w  d0,maze_color     ; save original maze color
+    ; re-set it right now just in case
+    move.w  d0,_custom+color+2  
+    
     move.w  #MAZE_BLINK_TIME,maze_blink_timer
     move.b  #8,maze_blink_nb_times
     ; copy maze data in bitplanes
@@ -1885,6 +1907,39 @@ draw_bounds
     add.l   #NB_BYTES_PER_LINE*7,a1
     dbf d0,.loopy
     rts
+
+; what: debug function to scan dot table & count dots
+; We have counter but just in case there's a problem...    
+; > D0: number of dots
+; trashes: none
+
+count_dots:
+    movem.l d1-d3/a0,-(a7)
+    moveq.l #0,d3
+    ; start with an offset (skip the fake 3 first rows)
+    lea dot_table+(Y_START/8)*NB_TILES_PER_LINE,a0
+      
+    move.w  #NB_TILE_LINES-1-(Y_START/8),d0    
+.loopy
+    move.w  #NB_TILES_PER_LINE-1,d1
+.loopx
+    move.b  (a0)+,d2
+    beq.b   .next
+    cmp.b   #1,d2
+    ; draw small dot
+    bne.b   .big
+    addq.l  #1,d3
+    bra.b   .next
+.big
+    addq.l  #1,d3
+.next
+    dbf d1,.loopx
+    dbf d0,.loopy
+    
+    move.l  d3,d0
+    movem.l (a7)+,d1-d3/a0
+    rts
+    
 draw_dots:
     ; draw pen gate
     lea	screen_data+(RED_YSTART_POS-15)*NB_BYTES_PER_LINE+(RED_XSTART_POS-X_START)/8-1,a1
@@ -1899,7 +1954,6 @@ draw_dots:
     move.b  d0,(1,a1)
     move.b  d0,(NB_BYTES_PER_LINE+1,a1)
 
-
     ; init dots
     lea     powerdots(pc),a2
     lea dot_table_read_only(pc),a0
@@ -1909,7 +1963,7 @@ draw_dots:
     move.b  (a0)+,(a1)+
     dbf d0,.copy
 
-    ; start with an offset (skip the fake 3 first rows
+    ; start with an offset (skip the fake 3 first rows)
     lea dot_table+(Y_START/8)*NB_TILES_PER_LINE,a0
     
     lea	screen_data+DOT_PLANE_OFFSET,a1
@@ -2226,7 +2280,6 @@ mouse:
 ; trashes: potentially all registers
 
 update_all
-    bsr update_sound_loops
 
     DEF_STATE_CASE_TABLE
 
@@ -2279,6 +2332,8 @@ update_all
     subq.w  #1,state_timer
     rts
 .playing
+    bsr update_sound_loops
+
     move.w   first_ready_timer(pc),d0
     cmp.w   ready_timer(pc),d0
     bne.b   .no_first_tick
@@ -3453,6 +3508,8 @@ update_pac
     ; save A1
     move.l  A1,A2
     bsr power_pill_taken
+    add.b  #1,nb_dots_eaten
+
     move.l  A2,A1
     
     move.b  #3,still_timer(a4)      ; still during 3 frames
@@ -3482,6 +3539,7 @@ update_pac
     bsr play_fx
     move.b  #1,still_timer(a4)      ; still during 1 frame
     bsr clear_dot
+    add.b  #1,nb_dots_eaten
 .score
     ; dot
     move.l  ghost_which_counts_dots(pc),a3
@@ -3497,7 +3555,6 @@ update_pac
     sub.w   #1,pen_nb_dots(a3)
 .no_need_to_count_dots
     move.b  nb_dots_eaten(pc),d4
-    addq.b  #1,d4
     tst.w   bonus_timer
     bne.b   .skip_fruit_test
 
@@ -3506,26 +3563,8 @@ update_pac
     cmp.b   #170,d4
     beq.b   .show_fruit
 .skip_fruit_test
-    move.b  d4,nb_dots_eaten
 
-    ; ------
-    ; DEBUG
-    cmp.b   previous_nb_dots_eaten,d4
-    bcc.b   .OKK
-    blitz
-.OKK
-    move.w  d4,-(a7)
-    sub.b   previous_nb_dots_eaten,d4
-    cmp.b   #1,d4
-    beq.b   .OKK2
-    move.b  nb_dots_eaten,d4
-    blitz
-    nop
-.OKK2
-    move.w  (a7)+,d4
-    
-    move.b  d4,previous_nb_dots_eaten    
-    ; DEBUG ------
+
     cmp.b   #TOTAL_NUMBER_OF_DOTS,d4
     bne.b   .other
     ; no more dots: win
@@ -3651,14 +3690,15 @@ update_pac
 .dd
     ; handle tunnel
     add.w   d4,d2
-    bpl.b   .positive
+    cmp.w   #X_MIN+1,d2
+    bcc.b   .positive
     ; warp to right
     move.w  #X_MAX,d2
     bra.b   .setx    
 .positive
     cmp.w   #X_MAX,d2
     bcs.b   .setx
-    clr.w   d2   ; warp to left
+    move.w   #X_MIN,d2   ; warp to left
 .setx
     move.w  d2,xpos(a4)
     move.w  d5,ypos(a4)
@@ -4348,8 +4388,6 @@ maze_blink_nb_times
 nb_lives
     dc.b    0
 nb_dots_eaten
-    dc.b    0
-previous_nb_dots_eaten
     dc.b    0
 invincible_cheat_flag
     dc.b    0
