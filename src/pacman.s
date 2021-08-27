@@ -341,6 +341,11 @@ intro:
 .out_intro    
     clr.w   state_timer
     move.w  #STATE_GAME_START_SCREEN,current_state
+
+    ; nothing pressed: no sound
+    move.l  joystick_state(pc),d0
+    btst    #JPB_BTN_RED,d0
+    beq.b   .timeout
 .release
     move.l  joystick_state(pc),d0
     btst    #JPB_BTN_RED,d0
@@ -348,6 +353,7 @@ intro:
 
     lea credit_sound(pc),a0
     bsr play_fx
+.timeout
 
 .game_start_loop
     move.l  joystick_state(pc),d0
@@ -373,12 +379,6 @@ intro:
     ; do it first, as the last bonus overwrites bottom left of screen
     bsr draw_bonuses    
     bsr draw_maze
-
-    ; compute tunnel position sprite
-    move.w  #TUNNEL_MASK_X,d0
-    move.w  #TUNNEL_MASK_Y,d1
-    bsr store_sprite_pos
-    move.l  d0,tunnel_sprite_control_word
    
     ; for debug
     ;;bsr draw_bounds
@@ -1155,14 +1155,6 @@ draw_ghosts:
     bsr.b hide_sprites
     rts
 .normal
-    ; enable tunnel mask
-    move.l  tunnel_sprite_control_word(pc),black_sprite
-    lea     sprites,a0
-    move.l  #black_sprite,d0
-    move.w  d0,(6,a0)
-    swap    d0
-    move.w  d0,(2,a0)
-     
     lea ghosts(pc),a0
     moveq.l #3,d7
 .gloop    
@@ -3233,6 +3225,7 @@ update_ghosts:
     ; end of sequence: chase mode all the time
     move.w  #MODE_CHASE,mode(a4)
     ; just to avoid timer overflow but could be ignored
+    move.l  a4,a0
     bsr update_ghost_mode_timer
     bra.b   .mode_done
     
@@ -4362,8 +4355,6 @@ previous_pacman_address
     dc.l    screen_data+2*NB_BYTES_PER_LINE+SCREEN_PLANE_SIZE ; valid address for first clear
 ghost_which_counts_dots
     dc.l    0
-tunnel_sprite_control_word
-    dc.l    0
 score_frame
     dc.l    0
 global_speed_table
@@ -4746,33 +4737,41 @@ get_ghost_move_speed:
 
 ; < A0: ghost structure
 ; > D0: 0 if not elroy, 1 if elroy level 1, 2 if elroy level 2    
+; trashes: none
 get_elroy_level:
     moveq   #0,d0
     cmp.l   #ghosts,a0
     bne.b   .out
+    move.w  d1,-(a7)
     move.b  #TOTAL_NUMBER_OF_DOTS,d1
     sub.b   nb_dots_eaten(pc),d1
     cmp.b   elroy_threshold_2(pc),d1
     bcs.b   .level2
     cmp.b   elroy_threshold_1(pc),d1
     bcs.b   .level1
+    move.w  (a7)+,d1
 .out
     rts
 .level1
+    move.w  (a7)+,d1
     moveq   #1,d0
     rts
 .level2
+    move.w  (a7)+,d1
     moveq   #2,d0
     rts
 ; < A0: ghost structure
 ; > D0: 0 if not elroy, 1 if elroy
+; trashes: none
 is_elroy:
     moveq   #0,d0
     cmp.l   #ghosts,a0
     bne.b   .out
+    move.w  d1,-(a7)
     move.b  #TOTAL_NUMBER_OF_DOTS,d1
     sub.b   nb_dots_eaten(pc),d1
     cmp.b   elroy_threshold_1(pc),d1
+    movem.w  (a7)+,d1
     bcs.b   .level1
 .out
     rts
@@ -5163,23 +5162,6 @@ score_sprite_entry:
     dc.w    sprpt+28,0
     dc.w    sprpt+30,0
 
-    IFEQ 1
-    dc.w    (TUNNEL_MASK_Y+44)<<8+1,$FFFE
-tunnel_copperlist:
-    REPT    16
-; color change for tunnel mask
-    ; reset
-    dc.w    color+38,$0F00
-    dc.w    1,(TUNNEL_MASK_X+24)<<1
-    ; set tunnel mask color (black)
-    dc.w    color+38,0
-    ; nexr line
-    dc.w    (TUNNEL_MASK_Y+45+REPTN)<<8+1,$FFFE
-    ENDR
-    dc.w    color+38,$0F0
-    ENDC
-;tunnel_sprite_color:
-;   dc.w tunnel_color_reg,0  ; set proper red ghost palette (trashed by tunnel) at start
 
 end_color_copper:
    dc.w  diwstrt,$3081            ;  DIWSTRT

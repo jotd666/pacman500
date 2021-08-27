@@ -1,12 +1,12 @@
 bugs:
 
-- mode issue still there (endless scatter)
-- sometimes pac too fast when taking power pill (eating a ghost?) at some point.
+- sometimes pac too fast at some point.
 - pac leaving a few pixels behind
 - ghosts show where they're going too late (missing one tile?)
 - pt player sample play issues: yes but covered by sound loop!!
 - black tunnel mask => sprite shifter
-- white fright palette in demo mode
+- level1: mask for cherry but no bonus displayed???
+- levels2=>xx: wrong plane computation for other bonuses (multiplication table???)
 
 random bugs:
 
@@ -16,6 +16,7 @@ random bugs:
 todo:
 
 - credit sound only if fire pressed
+- demo mode
 - extra life: test & redraw: watch video
 - leave pen behaviour after a life is lost
 - elroy behaviour after a life is lost
