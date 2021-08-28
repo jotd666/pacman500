@@ -3,23 +3,18 @@ bugs:
 - pac leaving a few pixels behind
 - ghosts show where they're going too late (missing one tile?)
 - pt player sample play issues: yes but covered by sound loop!!
-- higher levels: super speed on the right (same bug as random pac speedup??) ....
-- bonus doesn't appear (but mask does)
-- check inky target
-
-random bugs:
-
+- pacman super speed sometimes
+- demo mode (record output not replaying properly!!)
 - pacman traverses ghosts sometimes
-- sometimes pac too fast at some point.
+- check clyde target sometimes upper left WTF!!
 
 todo:
 
+- game over: stop all dma sound!!
 - use packed versions of musics, unpack when needed (in "press start" screen?)
-- demo mode (record output!!)
 - extra life: test & redraw: watch video
 - leave pen behaviour after a life is lost
 - elroy behaviour after a life is lost
 - intermission sequences
-- sound loop increase freq number of dots eaten 0 $40 $80 $C0 $E0 (au pif)
 
 

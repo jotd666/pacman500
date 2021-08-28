@@ -810,6 +810,7 @@ pink_chase
     add.w   (a2)+,d1
     move.l (a7)+,a2
     rts
+    ; inky
 cyan_chase
     ; according to pac-man direction, add an offset of 2 tiles to the temp tile
     movem.l d2/a2,-(a7)
@@ -822,11 +823,13 @@ cyan_chase
     lea red_ghost(pc),a2
     ; algebraic distance for X and Y between temp target & red ghost tile
     move.w  xpos(a2),d2
+    lsr.w   #3,d2   ; ghost X tile
     sub.w   d0,d2
     ; sub that distance to create symmetrical point
     sub.w   d2,d0
     ; for Y
     move.w  ypos(a2),d2
+    lsr.w   #3,d2   ; ghost Y tile
     sub.w   d1,d2
     sub.w   d2,d1
     ; that's it! simple, yet effective
@@ -861,8 +864,8 @@ pinky_direction_offset_table
 inky_direction_offset_table
     dc.w    2,0     ; right
     dc.w    -2,0    ; left
-    dc.w    -2,2    ; up: left offset is added, this is an original game bug
-    dc.w    2,0     ; down
+    dc.w    -2,-2    ; up: left offset is added, this is an original game bug
+    dc.w    0,2     ; down
 
 ; < A0: ghost structure
 ; trashes: A1, D0 & D1
@@ -1477,14 +1480,13 @@ draw_all
     ; blit fruit
     move.w  #BONUS_X_POS,d0
     move.w  #BONUS_Y_POS,d1
-    move.w  level_number,d2
+    move.w  level_number(pc),d2
     bsr draw_bonus
     bra.b   .no_fruit_disappear
 .no_fruit_appear
     cmp.w   #MSG_HIDE,bonus_display_message
     bne.b   .no_fruit_disappear
     clr.w   bonus_display_message
-    
     bsr clear_bonus
 .no_fruit_disappear
     ; score
@@ -3548,8 +3550,7 @@ update_pac
     beq.b   .no_fright1
     sub.w   #1,fright_timer
     bne.b   .no_fright1
-    ; resume sound loop
-    lea loop_fright_sound(pc),a0
+    ; fright mode just ended: resume normal sound loop
     bsr start_background_loop
 .no_fright1
     tst.w   bonus_timer
@@ -3782,8 +3783,27 @@ update_pac
     cmp.b   #170,d4
     beq.b   .show_fruit
 .skip_fruit_test
-
-
+    
+    ; empric/random limits to change loop freq
+    move.b  d4,d0
+    and.b   #$F,d0
+    bne.b   .no_sound_loop_increase ; optim
+    
+    cmp.b   #$40,d4
+    beq.b   .sound_loop_increase
+    cmp.b   #$80,d4
+    beq.b   .sound_loop_increase
+    cmp.b   #$C0,d4
+    beq.b   .sound_loop_increase
+    cmp.b   #$F0,d4
+    bne.b   .no_sound_loop_increase
+.sound_loop_increase    
+    add.w   #1,loop_index
+    ; now change loop only if no eyes and no fright
+    tst.w   fright_timer
+    bne.b   .no_sound_loop_increase
+    bsr start_background_loop
+.no_sound_loop_increase
     cmp.b   #TOTAL_NUMBER_OF_DOTS,d4
     bne.b   .other
     ; no more dots: win
@@ -3804,11 +3824,12 @@ update_pac
     ; show score
     move.w  #BONUS_SCORE_TIMER_VALUE,bonus_score_timer
     move.w  #MSG_SHOW,bonus_score_display_message      ; tell draw routine to show score
-   bra.b   .other
+    bra.b   .other
 
 .show_fruit
     move.b  #3,dot_table+BONUS_OFFSET
     move.w  #BONUS_TIMER_VALUE,bonus_timer
+    move.w  #MSG_SHOW,bonus_display_message    
     bra.b   .other
     
 .vtest
@@ -5212,6 +5233,10 @@ SOUND_ENTRY:MACRO
     SOUND_ENTRY eat_1,0,3
     SOUND_ENTRY eat_2,0,3
     SOUND_ENTRY loop_1,-1,0
+    SOUND_ENTRY loop_2,-1,0
+    SOUND_ENTRY loop_3,-1,0
+    SOUND_ENTRY loop_4,-1,0
+    SOUND_ENTRY loop_5,-1,0
     SOUND_ENTRY loop_fright,-1,0
     SOUND_ENTRY loop_eyes,-1,0
     SOUND_ENTRY music_1,0,0
@@ -5219,7 +5244,7 @@ SOUND_ENTRY:MACRO
     dc.l    0
     
 loop_table:
-    dc.l    loop_1_sound,loop_1_sound,loop_1_sound,loop_1_sound
+    dc.l    loop_1_sound,loop_2_sound,loop_3_sound,loop_4_sound,loop_5_sound
 loop_index
     dc.w    0
     
@@ -5710,6 +5735,22 @@ loop_1_raw
     incbin  "loop_1.raw"
     even
 loop_1_raw_end
+loop_2_raw
+    incbin  "loop_2.raw"
+    even
+loop_2_raw_end
+loop_3_raw
+    incbin  "loop_3.raw"
+    even
+loop_3_raw_end
+loop_4_raw
+    incbin  "loop_4.raw"
+    even
+loop_4_raw_end
+loop_5_raw
+    incbin  "loop_5.raw"
+    even
+loop_5_raw_end
 loop_fright_raw
     incbin  "loop_fright.raw"
     even
