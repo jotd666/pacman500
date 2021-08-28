@@ -1,22 +1,20 @@
 bugs:
 
-- sometimes pac too fast at some point.
 - pac leaving a few pixels behind
 - ghosts show where they're going too late (missing one tile?)
 - pt player sample play issues: yes but covered by sound loop!!
 - black tunnel mask => sprite shifter
-- level1: mask for cherry but no bonus displayed???
-- levels2=>xx: wrong plane computation for other bonuses (multiplication table???)
+- higher levels: super speed on the right (same bug as random pac speedup??) ....
 
 random bugs:
 
 - pacman traverses ghosts sometimes
-- fruit score not displayed sometimes (but noise works)
+- sometimes pac too fast at some point.
 
 todo:
 
-- credit sound only if fire pressed
-- demo mode
+- use packed versions of musics, unpack when needed (in "press start" screen?)
+- demo mode (record output!!)
 - extra life: test & redraw: watch video
 - leave pen behaviour after a life is lost
 - elroy behaviour after a life is lost

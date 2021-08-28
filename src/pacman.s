@@ -66,6 +66,7 @@ INTERRUPTS_ON_MASK = $E038
     APTR     frame_table
     APTR     frightened_ghost_white_frame_table
     APTR     frightened_ghost_blue_frame_table
+    APTR     tunnel_frame
     APTR     eye_frame_table
     APTR     copperlist_address
     APTR     color_register
@@ -128,6 +129,9 @@ NB_PLANES   = 4
 TUNNEL_MASK_X = NB_BYTES_PER_MAZE_LINE*8
 TUNNEL_MASK_Y = OTHERS_YSTART_POS-27
 
+; messages from update routine to display routine
+MSG_SHOW = 1
+MSG_HIDE = 2
 
 NB_TILES_PER_LINE = 2+28+2    ; 2 fake tiles in the start & end
 NB_TILE_LINES = 31+3    ; 3 fake tiles before the maze to simulate ghosts targets
@@ -689,6 +693,7 @@ init_ghosts
     move.l  #red_frightened_ghost_white_frame_table,frightened_ghost_white_frame_table(a0)
     move.l  #red_frightened_ghost_blue_frame_table,frightened_ghost_blue_frame_table(a0)
     move.l  #red_ghost_eye_frame_table,eye_frame_table(a0)
+    move.l  #red_tunnel_frame,tunnel_frame(a0)
     move.w  #(NB_TILES_PER_LINE-6),home_corner_xtile(a0)
     bsr     update_ghost_target
     move.w  #-1,h_speed(a0)
@@ -703,6 +708,7 @@ init_ghosts
     move.l  #pink_frightened_ghost_white_frame_table,frightened_ghost_white_frame_table(a0)
     move.l  #pink_frightened_ghost_blue_frame_table,frightened_ghost_blue_frame_table(a0)
     move.l  #pink_ghost_eye_frame_table,eye_frame_table(a0)
+    move.l  #pink_tunnel_frame,tunnel_frame(a0)
     bsr     update_ghost_target
     move.w  #0,home_corner_ytile(a0)
     move.w  #1,v_speed(a0)
@@ -718,6 +724,7 @@ init_ghosts
     move.l  #cyan_frightened_ghost_blue_frame_table,frightened_ghost_blue_frame_table(a0)
     move.w  #(NB_TILES_PER_LINE-4),home_corner_xtile(a0)
     move.w  #(NB_TILE_LINES+1),home_corner_ytile(a0) 
+    move.l  #cyan_tunnel_frame,tunnel_frame(a0)
     move.l  #cyan_ghost_eye_frame_table,eye_frame_table(a0)
     bsr update_ghost_target
     move.w  #-1,v_speed(a0)
@@ -732,6 +739,7 @@ init_ghosts
     move.l  #orange_frightened_ghost_white_frame_table,frightened_ghost_white_frame_table(a0)
     move.l  #orange_frightened_ghost_blue_frame_table,frightened_ghost_blue_frame_table(a0)
     move.l  #orange_ghost_eye_frame_table,eye_frame_table(a0)
+    move.l  #orange_tunnel_frame,tunnel_frame(a0)
     move.w  #(NB_TILE_LINES+1),home_corner_ytile(a0)
     bsr update_ghost_target
     move.w  #-1,v_speed(a0)
@@ -943,10 +951,10 @@ ghost_debug
     add.w  #DEBUG_X,d0
     clr.l   d2
     move.l  a2,a0
-    movem.l  d0-d1,-(a7)
+    move.l  d0,-(a7)
     bsr get_elroy_level
     move.w  d0,d2
-    movem.l  (a7)+,d0-d1
+    move.l  (a7)+,d0
     move.w  #0,d3
     bsr write_decimal_number
     
@@ -982,6 +990,17 @@ ghost_debug
 ;    bsr write_hexadecimal_number
     rts
 .debug_ghost
+    move.w  #DEBUG_X,d0
+    add.w  #8,d1
+    lea .gx(pc),a0
+    bsr write_string
+    lsl.w   #3,d0
+    add.w  #DEBUG_X,d0
+    clr.l   d2
+    move.w  xpos(a2),d2
+    move.w  #3,d3
+    bsr write_decimal_number
+    
     move.w  #DEBUG_X,d0
     add.w  #8,d1
     lea .timer(pc),a0
@@ -1029,6 +1048,8 @@ ghost_debug
     dc.b    "ELROY ",0
 .pink
     dc.b    "PINK",0
+.gx
+        dc.b    "GX ",0
         even
 
         
@@ -1112,6 +1133,7 @@ draw_debug
         dc.b    "PX ",0
 .py
         dc.b    "PY ",0
+
 .dots
         dc.b    "DOTC1 ",0
 .dots2
@@ -1157,14 +1179,32 @@ draw_ghosts:
 .normal
     lea ghosts(pc),a0
     moveq.l #3,d7
-.gloop    
+.gloop
     move.w  xpos(a0),d0
     ; too on the right, don't draw sprite
     cmp.w   #X_MAX,d0
     bcs.b   .do_display
     moveq.l #0,d0
     bra.b   .ssp
-.do_display    
+.do_display
+    move.w  d0,d6
+    sub.w   #X_MAX-16,d6
+    bcs.b   .no_tunnel_right
+    ; D6 = 1-15: sprite shift to the right
+    move.w  #X_MAX-16,d0    ; but fixed display position
+    bra.b   .tunnel   ; D6 is computed, skip
+.no_tunnel_right
+    ; tunnel left?
+    move.w  d0,d6
+    sub.w   #8+X_START,d6
+    bcc.b   .no_tunnel_left
+    ; tunnel left: leave X at 0
+    ; D6 = number of shift to the left, negated
+    moveq.w #8+X_START,d0
+    bra.b   .tunnel   ; D6 is computed, skip
+.no_tunnel_left
+    clr.w   d6      ; reset to 0
+.tunnel
     move.w  ypos(a0),d1
     ; center => top left
     sub.w  #8+X_START,d0
@@ -1223,7 +1263,43 @@ draw_ghosts:
     move.l  (a2)+,(a3)+
     move.l  (a2)+,(a3)+
 
+    ; get proper frame from proper frame set
     move.l  (a1,d2.w),a1
+    ; now if D6 is non-zero, handle shift
+    tst.w   d6
+    beq.b   .no_sprite_shifting
+    ; copy current frame in temp ghost frame
+
+    move.l  (tunnel_frame,a0),a2
+    addq.l  #4,a1   ; skip control word
+    addq.l  #4,a2   ; skip control word
+
+    bpl.b   .shift_right
+.shift_left
+    move.w  #15,d2
+    neg.w   d6
+.scopy_left:
+    move.l  (a1)+,d3
+    lsl.w   d6,d3
+    swap    d3
+    lsl.w   d6,d3
+    swap    d3
+    move.l  d3,(a2)+
+    dbf     d2,.scopy_left
+    move.l  (tunnel_frame,a0),a1
+    bra.b   .no_sprite_shifting
+.shift_right
+    move.w  #15,d2
+.scopy_right:
+    move.l  (a1)+,d3
+    lsr.w   d6,d3
+    swap    d3
+    lsr.w   d6,d3
+    swap    d3
+    move.l  d3,(a2)+
+    dbf     d2,.scopy_right
+    move.l  (tunnel_frame,a0),a1    ; temp frame
+.no_sprite_shifting    
     move.l  d0,(a1)     ; store control word
     move.l  a1,d2    
     move.l  copperlist_address(a0),a1
@@ -1298,14 +1374,16 @@ draw_all
     ; timer not running, animate
     bsr animate_power_dots
 
-    cmp.w   #BONUS_SCORE_TIMER_VALUE,bonus_score_timer
+    cmp.w   #MSG_SHOW,bonus_score_display_message
     bne.b   .no_bonus_score_appear
+    clr.w   bonus_score_display_message
     move.w  fruit_score_index(pc),d0
     bsr draw_bonus_score
+    bra.b   .no_bonus_score_disappear
 .no_bonus_score_appear
-    tst.w   bonus_score_clear_message
-    beq.b   .no_bonus_score_disappear
-    clr.w   bonus_score_clear_message
+    cmp.w   #MSG_HIDE,bonus_score_display_message
+    bne.b   .no_bonus_score_disappear
+    clr.w   bonus_score_display_message
     move.w  #BONUS_X_POS,d0
     move.w  #BONUS_Y_POS,d1
     move.w  #4,d2
@@ -1316,17 +1394,19 @@ draw_all
     bsr clear_plane_any
 .no_bonus_score_disappear    
     ; bonus
-    cmp.w   #BONUS_TIMER_VALUE,bonus_timer
+    cmp.w   #MSG_SHOW,bonus_display_message
     bne.b   .no_fruit_appear
+    clr.w   bonus_display_message
     ; blit fruit
     move.w  #BONUS_X_POS,d0
     move.w  #BONUS_Y_POS,d1
     move.w  level_number,d2
     bsr draw_bonus
+    bra.b   .no_fruit_disappear
 .no_fruit_appear
-    tst.w   bonus_clear_message
-    beq.b   .no_fruit_disappear
-    clr.w   bonus_clear_message
+    cmp.w   #MSG_HIDE,bonus_display_message
+    bne.b   .no_fruit_disappear
+    clr.w   bonus_display_message
     
     bsr clear_bonus
 .no_fruit_disappear
@@ -1358,7 +1438,7 @@ draw_all
     cmp.w   #BONUS_Y_POS+Y_START+8,player+ypos
     bne.b   .no_bonus_redraw
     bsr wait_blit       ; wait for pacman to draw
-    bsr draw_bonus_pac_plane        ; TEMP
+    bsr draw_bonus_pac_plane
 .no_bonus_redraw
 .draw_complete
     rts
@@ -1738,7 +1818,7 @@ draw_lives:
 draw_bonuses:
     move.w #NB_BYTES_PER_MAZE_LINE*8,d0
     move.w #248-32,d1
-    move.w  level_number,d2
+    move.w  level_number(pc),d2
     move.w  #1,d4
 .dbloopy
     move.w  #5,d3
@@ -1834,7 +1914,6 @@ draw_bonus:
     lea bonus_level_table(pc),a0
     move.w  (a0,d2.w),d3      ; bonus index
     lea mul40_table(pc),a1
-    add.w   d3,d3
     add.w   d3,d3
     move.w  (a1,d3.w),d3    ; *40
     lsl.w   #3,d3           ; *8 => * 320
@@ -2167,12 +2246,12 @@ level2_interrupt:
     move.w  #1,h_speed(a0)
     clr.w   v_speed(a0)
     ; pink
-    add.l   #Ghost_SIZEOF,a0
-    move.w  #0,xpos(a0)
-    move.w  #OTHERS_YSTART_POS,ypos(a0)
-    move.w  #RIGHT,direction(a0)
-    move.w  #1,h_speed(a0)
-    clr.w   v_speed(a0)
+    ;;add.l   #Ghost_SIZEOF,a0
+    ;;move.w  #0,xpos(a0)
+    ;;move.w  #OTHERS_YSTART_POS,ypos(a0)
+    ;;move.w  #RIGHT,direction(a0)
+    ;;move.w  #1,h_speed(a0)
+    ;;clr.w   v_speed(a0)
     
     move.l  (a7)+,a0
     bra.b   .no_playing
@@ -2185,10 +2264,11 @@ level2_interrupt:
     bsr     clear_debug_screen
     bra.b   .no_playing
 .no_debug
-    cmp.b   #$54,d0     ; F4
+    cmp.b   #$54,d0     ; F5
     bne.b   .no_bonus
     move.b  #3,dot_table+BONUS_OFFSET
     move.w  #BONUS_TIMER_VALUE,bonus_timer
+    move.w  #MSG_SHOW,bonus_display_message
     bra.b   .no_playing
 .no_bonus
 
@@ -2262,7 +2342,6 @@ level3_interrupt:
 vbl_counter:
     dc.w    0
 mouse:	
-	;move.w	#$0F0,$DFF180
 	BTST #6,$BFE001
 	BNE  mouse
 	rts
@@ -2362,11 +2441,11 @@ update_all
     rts
 remove_bonus
     move.b  #0,dot_table+BONUS_OFFSET
-    move.w  #1,bonus_clear_message      ; tell draw routine to clear
+    move.w  #MSG_HIDE,bonus_display_message      ; tell draw routine to clear
     clr.w   bonus_timer
     rts
 remove_bonus_score
-    move.w  #1,bonus_score_clear_message      ; tell draw routine to clear
+    move.w  #MSG_HIDE,bonus_score_display_message      ; tell draw routine to clear
     clr.w   bonus_score_timer
     rts
 update_power_dot_flashing
@@ -3577,7 +3656,8 @@ update_pac
     bsr play_fx
     ; show score
     move.w  #BONUS_SCORE_TIMER_VALUE,bonus_score_timer
-    bra.b   .other
+    move.w  #MSG_SHOW,bonus_score_display_message      ; tell draw routine to show score
+   bra.b   .other
 
 .show_fruit
     move.b  #3,dot_table+BONUS_OFFSET
@@ -4396,9 +4476,9 @@ elroy_threshold_2
     dc.b    0
     even
 
-bonus_clear_message
+bonus_display_message
     dc.w    0
-bonus_score_clear_message
+bonus_score_display_message
     dc.w    0
 clear_ready_message
     dc.w    0
@@ -5228,14 +5308,14 @@ namco:
     incbin  "namco.bin"
     
 bonus_pics:
-    incbin  "cherry.bin"
-    incbin  "strawberry.bin"
-    incbin  "peach.bin"
-    incbin  "apple.bin"
-    incbin  "grapes.bin"
-    incbin  "galaxian.bin"
-    incbin  "bell.bin"
-    incbin  "key.bin" 
+    incbin  "cherry.bin"        ; 0
+    incbin  "strawberry.bin"    ; 1
+    incbin  "peach.bin"         ; 2
+    incbin  "apple.bin"         ; 3
+    incbin  "grapes.bin"        ; 4
+    incbin  "galaxian.bin"      ; 5
+    incbin  "bell.bin"          ; 6
+    incbin  "key.bin"           ; 7
 bonus_scores:
     incbin  "bonus_scores_0.bin"    ; 100
     incbin  "bonus_scores_1.bin"    ; 300
@@ -5340,6 +5420,10 @@ DECL_GHOST:MACRO
 \1_ghost_eyes_3
     dc.l    0
     incbin  "ghost_eyes_3.bin"
+    dc.l    0
+\1_tunnel_frame
+    dc.l    0
+    ds.l    64,0    ; generated on the fly     
     dc.l    0
     ENDM
         
