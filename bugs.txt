@@ -5,6 +5,7 @@ bugs:
 - pt player sample play issues: yes but covered by sound loop!!
 - higher levels: super speed on the right (same bug as random pac speedup??) ....
 - bonus doesn't appear (but mask does)
+- check inky target
 
 random bugs:
 

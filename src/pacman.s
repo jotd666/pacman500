@@ -105,6 +105,10 @@ MODE_CHASE = 20
 MODE_FRIGHT = 30
 MODE_EYES = 40
 
+; temp if nonzero, then records game input, intro music doesn't play
+; and when one life is lost, blitzes and a0 points to move record table
+RECORD_INPUT_TABLE_SIZE = 0; $2000
+
 EXTRA_LIFE_SCORE = 10000/10  ; TEMP
 
 ; actual nb ticks (PAL)
@@ -261,7 +265,10 @@ Start:
 ;    jsr (_LVOWaitTOF,a6)
 
     move.w  #STATE_INTRO_SCREEN,current_state
-
+    ;;move.w  #STATE_GAME_START_SCREEN,current_state
+    IFEQ    RECORD_INPUT_TABLE_SIZE
+    ;;st.b    demo_mode
+    ENDC
     
     bsr init_sound
     
@@ -335,7 +342,7 @@ intro:
     move.w #$83E0,dmacon(a5)
     move.w #INTERRUPTS_ON_MASK,intena(a5)    ; enable level 6!!
     
-.intro_loop
+.intro_loop    
     cmp.w   #STATE_INTRO_SCREEN,current_state
     bne.b   .out_intro
     move.l  joystick_state(pc),d0
@@ -343,22 +350,20 @@ intro:
     beq.b   .restart
     btst    #JPB_BTN_RED,d0
     beq.b   .intro_loop
+    clr.b   demo_mode
 .out_intro    
     clr.w   state_timer
     move.w  #STATE_GAME_START_SCREEN,current_state
-
-    ; nothing pressed: no sound
-    move.l  joystick_state(pc),d0
-    btst    #JPB_BTN_RED,d0
-    beq.b   .timeout
+    
 .release
     move.l  joystick_state(pc),d0
     btst    #JPB_BTN_RED,d0
     bne.b   .release
 
+    tst.b   demo_mode
+    bne.b   .no_credit
     lea credit_sound(pc),a0
     bsr play_fx
-.timeout
 
 .game_start_loop
     move.l  joystick_state(pc),d0
@@ -367,6 +372,7 @@ intro:
     btst    #JPB_BTN_RED,d0
     beq.b   .game_start_loop
 
+.no_credit
     
 .restart    
     lea _custom,a5
@@ -424,8 +430,24 @@ intro:
     add.w   #1,level_number
     bra.b   .new_level
 .life_lost
+    IFNE    RECORD_INPUT_TABLE_SIZE
+    lea record_input_table,a0
+    move.l  record_data_pointer(pc),a1
+    ; pause so debugger can grab data
+    blitz
+    ENDC
+
+    tst.b   demo_mode
+    beq.b   .no_demo
+    ; lose one life in demo mode: return to intro
+    move.w  #STATE_GAME_OVER,current_state
+    move.w  #1,state_timer
+    bra.b   .game_over
+.no_demo
+
     sub.b   #1,nb_lives
     bne.b   .new_life
+
     ; 3 seconds
     move.w  #ORIGINAL_TICKS_PER_SEC*3,state_timer
     move.w  #STATE_GAME_OVER,current_state
@@ -434,6 +456,8 @@ intro:
     ; quit
     bsr     restore_interrupts
 			      
+    bsr     wait_blit
+
     bsr     finalize_sound
     
     lea _custom,a5
@@ -493,6 +517,8 @@ clear_screen
     
 init_new_play:
     ; global init at game start
+    move.l  #demo_moves,record_data_pointer
+    clr.l   replayed_input_state
     move.b  #3,nb_lives
     clr.b   extra_life_awarded
     clr.b    music_played
@@ -924,7 +950,22 @@ init_player
     swap    d0
     
     move.w  d0,first_ready_timer
+    IFNE    RECORD_INPUT_TABLE_SIZE
+    move.l  #ORIGINAL_TICKS_PER_SEC,d0 ; no start music when recording
+    ELSE
+    tst.b   demo_mode
+    beq.b   .no_demo
+    move.l  #ORIGINAL_TICKS_PER_SEC,d0 ; no start music when demo
+.no_demo
+    ENDC
 .played
+    IFNE    RECORD_INPUT_TABLE_SIZE
+    move.l  #record_input_table,record_data_pointer ; start of table
+    clr.l   previous_joystick_state
+    ENDC
+
+    clr.w   record_input_clock                      ; start of time
+    
     move.w  d0,ready_timer
     clr.l   previous_random
     move.w  #-1,player_killed_timer
@@ -1377,11 +1418,7 @@ draw_all
     
 .game_over
     bsr clear_bonus
-    move.w  #72,d0
-    move.w  #136,d1
-    move.w  #$0f00,d2   ; red
-    lea game_over_string(pc),a0
-    bsr write_color_string
+    bsr write_game_over
     bra.b   .draw_complete
 .playing
     tst.w   clear_ready_message
@@ -1397,6 +1434,9 @@ draw_all
     tst.w   ready_timer
     bmi.b   .ready_off
 .still_ready
+    tst.b   demo_mode
+    bne.b   .ready_off
+    
     move.w  #88,d0
     move.w  #136,d1
     move.w  #$0ff0,d2
@@ -1477,6 +1517,11 @@ draw_all
     bsr wait_blit       ; wait for pacman to draw
     bsr draw_bonus_pac_plane
 .no_bonus_redraw
+    tst.b   demo_mode
+    beq.b   .no_demo
+    ;;bsr wait_blit       ; wait for pacman to draw
+    bsr write_game_over
+.no_demo
 .draw_complete
     rts
 
@@ -1486,6 +1531,13 @@ write_high_score
     move.w  #24+32,d1
     move.w  #6,d3
     bra write_decimal_number
+    
+write_game_over
+    move.w  #72,d0
+    move.w  #136,d1
+    move.w  #$0f00,d2   ; red
+    lea game_over_string(pc),a0
+    bra write_color_string
     
 animate_power_dots    
     move.w  power_dot_timer(pc),d0
@@ -1614,6 +1666,7 @@ draw_start_screen
     move.w  #48+16+16,d0
     move.w  #172+36,d1
     bsr blit_plane_any
+    bsr wait_blit
     
     lea .namco_string(pc),a0
     move.w  #48+16,d0
@@ -1629,7 +1682,7 @@ draw_start_screen
 .bp1_string
     dc.b    "BONUS PACMAN FOR 10000 pts",0
 .namco_string
-    dc.b    "c###########1980",0
+    dc.b    "c########1980",0
     even
 draw_intro_screen
     tst.w   state_timer
@@ -2440,6 +2493,9 @@ update_all
     subq.w  #1,state_timer
     rts
 .playing
+    ; for demo mode
+    addq.w  #1,record_input_clock
+
     bsr update_sound_loops
 
     move.w   first_ready_timer(pc),d0
@@ -2575,6 +2631,9 @@ update_intro_screen
     ; change state
     clr.w   state_timer
     move.w  #STATE_GAME_START_SCREEN,current_state
+    ; in demo mode
+    st.b    demo_mode
+    
 .wait
     rts
 .remaining_ghosts
@@ -3544,7 +3603,58 @@ update_pac
     subq.w  #1,prepost_turn(a4)
 .ptzero
     move.l  joystick_state(pc),d0
-
+    IFNE    RECORD_INPUT_TABLE_SIZE
+    bsr     record_input
+    ENDC
+    tst.b   demo_mode
+    beq.b   .no_demo
+    ; if fire is pressed, end demo, goto start screen
+    btst    #JPB_BTN_RED,d0
+    beq.b   .no_demo_end
+    clr.b   demo_mode
+    move.w  #STATE_GAME_START_SCREEN,current_state
+    rts
+.no_demo_end
+    ; demo running
+    ; read next timestamp
+    move.l  record_data_pointer(pc),a0
+    cmp.l   #demo_moves_end,a0
+    bcc.b   .no_demo        ; no more input
+    move.b  (a0),d2
+    lsl.w   #8,d2
+    move.b  (1,a0),d2
+    ;;add.b   #3,d2   ; correction???
+    cmp.w  record_input_clock(pc),d2
+    bne.b   .no_demo        ; don't do anything now
+    ; new event
+    move.b  (2,a0),d2
+    addq.w  #3,a0
+    move.l  a0,record_data_pointer
+    btst    #LEFT>>2,d2
+    beq.b   .no_auto_left
+    bset    #JPB_BTN_LEFT,d0
+    bra.b   .no_auto_right
+.no_auto_left
+    btst    #RIGHT>>2,d2
+    beq.b   .no_auto_right
+    bset    #JPB_BTN_RIGHT,d0
+.no_auto_right
+    btst    #UP>>2,d2
+    beq.b   .no_auto_up
+    bset    #JPB_BTN_UP,d0
+    bra.b   .no_auto_down
+.no_auto_up
+    btst    #DOWN>>2,d2
+    beq.b   .no_auto_down
+    bset    #JPB_BTN_DOWN,d0
+.no_auto_down
+    ; set replayed input state
+    move.l  d0,replayed_input_state
+    
+    ; read live or recorded controls
+.no_demo
+    tst.l   d0
+    beq.b   .out        ; nothing is currently pressed: optimize
     btst    #JPB_BTN_RIGHT,d0
     beq.b   .no_right
     move.w  player_speed(pc),h_speed(a4)
@@ -3818,6 +3928,45 @@ update_pac
 .no_hmove
     rts
 
+    IFNE    RECORD_INPUT_TABLE_SIZE
+record_input:
+    cmp.l   previous_joystick_state(pc),d0
+    beq.b   .no_input
+    move.l  d0,previous_joystick_state
+    clr.b   d1
+    ; now store clock & joystick state, "compressed" to 4 bits (up,down,left,right)
+    btst    #JPB_BTN_RIGHT,d0
+    beq.b   .norr
+    bset    #RIGHT>>2,d1
+    bra.b   .norl
+.norr
+    btst    #JPB_BTN_LEFT,d0
+    beq.b   .norl
+    bset    #LEFT>>2,d1
+.norl
+    btst    #JPB_BTN_UP,d0
+    beq.b   .noru
+    bset    #UP>>2,d1
+    bra.b   .nord
+.noru
+    btst    #JPB_BTN_DOWN,d0
+    beq.b   .nord
+    bset    #DOWN>>2,d1
+.nord
+    move.l record_data_pointer(pc),a0
+    cmp.l   #record_input_table+RECORD_INPUT_TABLE_SIZE-4,a0
+    bcc.b   .no_input       ; overflow!!!
+    
+    ; store clock
+    move.b  record_input_clock(pc),(a0)+
+    move.b  record_input_clock+1(pc),(a0)+
+    move.b  d1,(a0)+
+    ; update pointer
+    move.l  a0,record_data_pointer
+.no_input
+    rts
+    ENDC
+    
 ; called when pacman moves
 ; < A4: pac player
 animate_pacman
@@ -4433,6 +4582,17 @@ previous_random
     dc.l    0
 joystick_state
     dc.l    0
+replayed_input_state
+    dc.l    0
+record_data_pointer
+    dc.l    0
+record_input_clock
+    dc.w    0    
+    IFNE    RECORD_INPUT_TABLE_SIZE
+previous_joystick_state
+    dc.l    0
+
+    ENDC    
 ready_timer:
     dc.w    0
 first_ready_timer:
@@ -4500,6 +4660,8 @@ nb_dots_eaten
 invincible_cheat_flag
     dc.b    0
 debug_flag
+    dc.b    0
+demo_mode
     dc.b    0
 extra_life_awarded
     dc.b    0
@@ -4576,6 +4738,11 @@ gfxbase
 gfxbase_copperlist
     dc.l    0
 GRname:   dc.b "graphics.library",0
+
+; table with 2 bytes: 60hz clock, 1 byte: move mask for the demo
+demo_moves:
+    incbin  "pacman_moves.bin"
+demo_moves_end:
     even
 
 pac_dir_table
@@ -4666,7 +4833,7 @@ p1_string
 score_string
     dc.b    "       00",0
 game_over_string
-    dc.b    "GAME  OVER",0
+    dc.b    "GAME##OVER",0
 ready_string
     dc.b    "READY!",0
 character_nickname_string:
@@ -4916,11 +5083,17 @@ is_elroy:
 
 ; < A0: sound struct
 play_fx
+    tst.b   demo_mode
+    bne.b   .no_sound
     lea _custom,a6
     bra _mt_playfx
-
+.no_sound
+    rts
+    
 ; < A0: sound struct
 play_loop_fx
+    tst.b   demo_mode
+    bne.b   .no_sound
     movem.l  d0-d1/a1,-(a7)
     moveq   #0,d0
     move.b  ss_channel(a0),d0
@@ -4940,8 +5113,9 @@ play_loop_fx
     move.w  ss_nb_repeats(a0),ss_current_repeat(a0)   ; set number of repeats
 .out
     movem.l  (a7)+,d0-d1/a1
+.no_sound
     rts
-    
+
 stop_loop_fx
     move.w  d0,-(a7)
     clr.w   ss_current_repeat(a0)  ; stop loop counter
@@ -5221,7 +5395,11 @@ HWSPR_TAB_XPOS:
 HWSPR_TAB_YPOS:
 	ds.l	512
     
-
+    IFNE   RECORD_INPUT_TABLE_SIZE
+record_input_table:
+    ds.b    RECORD_INPUT_TABLE_SIZE
+    ENDC
+    
 dot_table
     ds.b    NB_TILES_PER_LINE*NB_TILE_LINES
     
