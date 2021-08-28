@@ -67,6 +67,7 @@ INTERRUPTS_ON_MASK = $E038
     APTR     frightened_ghost_white_frame_table
     APTR     frightened_ghost_blue_frame_table
     APTR     tunnel_frame
+    APTR     target_frame
     APTR     eye_frame_table
     APTR     copperlist_address
     APTR     color_register
@@ -694,6 +695,7 @@ init_ghosts
     move.l  #red_frightened_ghost_blue_frame_table,frightened_ghost_blue_frame_table(a0)
     move.l  #red_ghost_eye_frame_table,eye_frame_table(a0)
     move.l  #red_tunnel_frame,tunnel_frame(a0)
+    move.l  #red_target_frame,target_frame(a0)
     move.w  #(NB_TILES_PER_LINE-6),home_corner_xtile(a0)
     bsr     update_ghost_target
     move.w  #-1,h_speed(a0)
@@ -709,6 +711,7 @@ init_ghosts
     move.l  #pink_frightened_ghost_blue_frame_table,frightened_ghost_blue_frame_table(a0)
     move.l  #pink_ghost_eye_frame_table,eye_frame_table(a0)
     move.l  #pink_tunnel_frame,tunnel_frame(a0)
+    move.l  #pink_target_frame,target_frame(a0)
     bsr     update_ghost_target
     move.w  #0,home_corner_ytile(a0)
     move.w  #1,v_speed(a0)
@@ -726,6 +729,7 @@ init_ghosts
     move.w  #(NB_TILE_LINES+1),home_corner_ytile(a0) 
     move.l  #cyan_tunnel_frame,tunnel_frame(a0)
     move.l  #cyan_ghost_eye_frame_table,eye_frame_table(a0)
+    move.l  #cyan_target_frame,target_frame(a0)
     bsr update_ghost_target
     move.w  #-1,v_speed(a0)
     ; orange ghost
@@ -740,6 +744,7 @@ init_ghosts
     move.l  #orange_frightened_ghost_blue_frame_table,frightened_ghost_blue_frame_table(a0)
     move.l  #orange_ghost_eye_frame_table,eye_frame_table(a0)
     move.l  #orange_tunnel_frame,tunnel_frame(a0)
+    move.l  #orange_target_frame,target_frame(a0)
     move.w  #(NB_TILE_LINES+1),home_corner_ytile(a0)
     bsr update_ghost_target
     move.w  #-1,v_speed(a0)
@@ -825,8 +830,8 @@ orange_chase
 pinky_direction_offset_table
     dc.w    4,0     ; right
     dc.w    -4,0    ; left
-    dc.w    -4,4    ; up: left offset is added, this is an original game bug
-    dc.w    4,0     ; down
+    dc.w    -4,-4    ; up: left offset is added, this is an original game bug
+    dc.w    0,4     ; down
 inky_direction_offset_table
     dc.w    2,0     ; right
     dc.w    -2,0    ; left
@@ -1307,9 +1312,41 @@ draw_ghosts:
     swap    d2
     move.w  d2,(2,a1)    
     
+    tst.b   debug_flag
+    bne.b   .debug_targets
+.next_ghost
     add.l   #Ghost_SIZEOF,a0
     dbf d7,.gloop
     rts
+    
+.debug_targets    
+    ; draw targets (debug mode)
+    ; A1-8: other sprite of the same palette (ghosts use 1-7)
+    move.w  target_xtile(a0),d0
+    lsl.w   #3,d0
+    move.w  target_ytile(a0),d1
+    lsl.w   #3,d1
+    sub.w  #8+X_START,d0
+    bpl.b   .posx
+    moveq   #0,d0
+.posx
+    cmp.w   #268,d1
+    bcs.b   .ylow
+    sub.w   #16,d1
+.ylow
+    sub.w  #4+Y_START,d1    ; not 8, because maybe table is off?
+    bpl.b   .posy
+    moveq   #0,d1
+.posy
+    bsr     store_sprite_pos
+    move.l  (target_frame,a0),a1
+    move.l  d0,(a1)
+    move.l  a1,d2
+    move.l  copperlist_address(a0),a1
+    move.w  d2,(6-8,a1)
+    swap    d2
+    move.w  d2,(2-8,a1)    
+    bra.b   .next_ghost
 
 .eyes
     move.l eye_frame_table(a0),a1
@@ -5215,7 +5252,7 @@ tunnel_color_reg = color+38
 colors:
    dc.w color,0     ; fix black (so debug can flash color0)
 sprites:
-    ; tunnel mask
+    ; red target
     dc.w    sprpt,0
     dc.w    sprpt+2,0
 ghost_sprites:
@@ -5424,6 +5461,14 @@ DECL_GHOST:MACRO
 \1_tunnel_frame
     dc.l    0
     ds.l    64,0    ; generated on the fly     
+    dc.l    0
+\1_target_frame
+    dc.l    0
+    dc.l    0
+    REPT    14
+    dc.l    $7FFE0000    ; square with ghost color
+    ENDR
+    dc.l    0
     dc.l    0
     ENDM
         

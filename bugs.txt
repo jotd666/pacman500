@@ -3,8 +3,8 @@ bugs:
 - pac leaving a few pixels behind
 - ghosts show where they're going too late (missing one tile?)
 - pt player sample play issues: yes but covered by sound loop!!
-- black tunnel mask => sprite shifter
 - higher levels: super speed on the right (same bug as random pac speedup??) ....
+- bonus doesn't appear (but mask does)
 
 random bugs:
 
@@ -20,6 +20,5 @@ todo:
 - elroy behaviour after a life is lost
 - intermission sequences
 - sound loop increase freq number of dots eaten 0 $40 $80 $C0 $E0 (au pif)
-- test / display ghosts targets with extra sprite (debug mode)
 
 
