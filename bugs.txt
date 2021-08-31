@@ -1,20 +1,23 @@
 bugs:
 
 - pac leaving a few pixels behind
-- ghosts show where they're going too late (missing one tile?)
 - pt player sample play issues: yes but covered by sound loop!!
-- pacman super speed sometimes
-- demo mode (record output not replaying properly!!)
+- pacman super speed sometimes: flash when speed is 2 several times in a row
+- demo mode (record input not replaying properly!!)
 - pacman traverses ghosts sometimes
 - check clyde target sometimes upper left WTF!!
+- .compute_player_speed: call only when a move must be made
+- eye-return sound loop not correct
 
 todo:
 
-- game over: stop all dma sound!!
-- use packed versions of musics, unpack when needed (in "press start" screen?)
-- extra life: test & redraw: watch video
-- leave pen behaviour after a life is lost
-- elroy behaviour after a life is lost
-- intermission sequences
+- leave pen behaviour after a life is lost: coded, but wrong!!!!!!!!!!!!!!!!!!!!!
+- elroy behaviour after a life is lost: coded!!
+- intermission level 2: longer so the music can end
+- intermission sequences:
+  * 3"20 (after level 2): ghost chases pacman, big pacman chases back
+  * 7"50 (after level 5): ghost chases pacman, tears his drape on a nail
+  * 13"00 (after level 9): ghost chases pacman with repaired drape, but returns almost naked
+  * 18"00 (after level 13): same as before
 
 

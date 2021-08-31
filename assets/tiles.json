@@ -116,6 +116,14 @@
    "frames":8,
    "start_x":32,
    "start_y":48
+  },
+  {
+   "name":"big_pac",
+   "frames":3,
+   "start_x":32,
+   "start_y":16,
+   "width":32,
+   "height":32
   }
  ]
 }

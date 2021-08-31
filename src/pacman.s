@@ -83,11 +83,13 @@ INTERRUPTS_ON_MASK = $E038
     UWORD    flash_timer
     UWORD    flash_toggle_timer
     UWORD    pen_timer
-    UWORD    pen_nb_dots
+    UBYTE    pen_nb_dots
+    UBYTE    pen_dot_limit  ; 0, 7, 17, 32 depending on which ghost
     UBYTE    reverse_flag   ; direction change flag
     UBYTE    flashing_as_white
-
-	LABEL	Ghost_SIZEOF
+    UBYTE    pen_exit_override_flag
+    UBYTE    pad2
+	LABEL	 Ghost_SIZEOF
     
     ;Exec Library Base Offsets
 
@@ -104,6 +106,11 @@ MODE_SCATTER = 10
 MODE_CHASE = 20
 MODE_FRIGHT = 30
 MODE_EYES = 40
+
+FIRST_INTERMISSION_LEVEL = 2
+SECOND_INTERMISSION_LEVEL = 5
+THIRD_INTERMISSION_LEVEL = 9
+FOURTH_INTERMISSION_LEVEL = 13
 
 ; temp if nonzero, then records game input, intro music doesn't play
 ; and when one life is lost, blitzes and a0 points to move record table
@@ -142,7 +149,7 @@ NB_TILES_PER_LINE = 2+28+2    ; 2 fake tiles in the start & end
 NB_TILE_LINES = 31+3    ; 3 fake tiles before the maze to simulate ghosts targets
 NB_LINES = NB_TILE_LINES*8
 
-MAZE_BLINK_TIME = NB_TICKS_PER_SEC/2
+MAZE_BLINK_TIME = NB_TICKS_PER_SEC/4
 
 NB_FLASH_FRAMES = 14
 
@@ -198,6 +205,7 @@ STATE_NEXT_LEVEL = 3*4
 STATE_LIFE_LOST = 4*4
 STATE_INTRO_SCREEN = 5*4
 STATE_GAME_START_SCREEN = 6*4
+STATE_INTERMISSION_SCREEN = 7*4
 
 ; jump table macro, used in draw and update
 DEF_STATE_CASE_TABLE:MACRO
@@ -214,6 +222,7 @@ DEF_STATE_CASE_TABLE:MACRO
     dc.l    .life_lost
     dc.l    .intro_screen
     dc.l    .game_start_screen
+    dc.l    .intermission_screen
     ENDM
     
 ; write current PC value to some address
@@ -325,6 +334,8 @@ Start:
     move.w #0,bpl1mod(a5)                ; modulo de tous les plans = 40
     move.w #0,bpl2mod(a5)
 
+
+    
 intro:
     bsr stop_background_loop
     
@@ -334,20 +345,23 @@ intro:
     
     bsr draw_score
 
-    move.w  #0,state_timer
-    move.w  #0,vbl_counter
-    
+    clr.w  state_timer
+    clr.w  vbl_counter
+
+   
     bsr wait_bof
     ; init sprite, bitplane, whatever dma
     move.w #$83E0,dmacon(a5)
     move.w #INTERRUPTS_ON_MASK,intena(a5)    ; enable level 6!!
     
+
+
 .intro_loop    
     cmp.w   #STATE_INTRO_SCREEN,current_state
     bne.b   .out_intro
-    move.l  joystick_state(pc),d0
     btst    #6,$BFE001
     beq.b   .restart
+    move.l  joystick_state(pc),d0
     btst    #JPB_BTN_RED,d0
     beq.b   .intro_loop
     clr.b   demo_mode
@@ -382,13 +396,41 @@ intro:
 
 .new_level  
     bsr clear_screen
-    bsr draw_score
+    bsr draw_score    
     bsr init_level
     lea _custom,a5
     move.w  #$7FFF,(intena,a5)
 
     ; do it first, as the last bonus overwrites bottom left of screen
-    bsr draw_bonuses    
+    bsr draw_bonuses
+    
+    ; on some levels, there's an intermission sequence
+
+    cmp.w  #FIRST_INTERMISSION_LEVEL,level_number
+    bne.b   .no_intermission
+    
+    bsr wait_bof
+    clr.w  state_timer
+
+    move.w  #STATE_INTERMISSION_SCREEN,current_state
+    move.w #INTERRUPTS_ON_MASK,intena(a5)
+  
+.intermission_loop
+    cmp.w   #STATE_INTERMISSION_SCREEN,current_state
+    bne.b   .out_intermission
+    btst    #6,$BFE001
+    beq.b   .out_intermission
+    move.w  joystick_state(pc),d0
+    btst    #JPB_BTN_RED,d0
+    bne.b   .out_intermission
+    bra.b   .intermission_loop   
+.out_intermission    
+    clr.w   state_timer    
+    
+    lea _custom,a5
+    move.w  #$7FFF,(intena,a5)
+    bsr stop_sounds
+.no_intermission
     bsr draw_maze
    
     ; for debug
@@ -421,6 +463,7 @@ intro:
 .game_start_screen
 .intro_screen       ; not reachable from mainloop
     bra.b   intro
+.intermission_screen
 .playing
 .level_completed
     bra.b   .mainloop
@@ -444,7 +487,15 @@ intro:
     move.w  #1,state_timer
     bra.b   .game_over
 .no_demo
-
+    ; life lost, make next start a little easier by
+    ; locking elroy mode
+    st.b    elroy_mode_lock
+    ; note down that the ghost release system changes now
+    ; that a life was lost
+    st.b    a_life_was_lost
+    ; global dot counter for ghosts to exit pen
+    clr.b   ghost_release_dot_counter
+    
     sub.b   #1,nb_lives
     bne.b   .new_life
 
@@ -548,6 +599,9 @@ init_level:
     lea bonus_level_table(pc),a0
     move.w  (a0,d2.w),fruit_score_index
     clr.b  nb_dots_eaten
+    clr.b   elroy_mode_lock
+    clr.b   a_life_was_lost
+    
     ; speed table
     add.w   d2,d2
     lea speed_table(pc),a1
@@ -664,11 +718,11 @@ init_ghosts
     bne.b   .no_reset
     clr.w   mode_counter(a0)
     clr.w   speed_table_index(a0)
-    clr.w   pen_nb_dots(a0)
+    clr.b   pen_nb_dots(a0)
 .no_reset    
-    ; todo: pen timer
     clr.w   pen_timer(a0)
     clr.b   reverse_flag(a0)
+    clr.b   pen_exit_override_flag(a0)
     clr.w   h_speed(a0)
     clr.w   v_speed(a0)
     clr.w   target_xtile(a0)
@@ -701,7 +755,7 @@ init_ghosts
 
 
 .igloop2
-    move.w  (a2)+,pen_nb_dots(a0)
+    move.b  (a2)+,pen_nb_dots(a0)
     add.l   #Ghost_SIZEOF,a0
     dbf d7,.igloop2
 .skip_dot_init    
@@ -716,6 +770,7 @@ init_ghosts
     move.w  #8,frame(a0)
     move.l  #'BLIN',character_id(a0)
 
+    clr.b   pen_dot_limit(a0)   
     move.l  #red_ghost_frame_table,frame_table(a0)
     move.l  #red_frightened_ghost_white_frame_table,frightened_ghost_white_frame_table(a0)
     move.l  #red_frightened_ghost_blue_frame_table,frightened_ghost_blue_frame_table(a0)
@@ -732,6 +787,7 @@ init_ghosts
     move.w  #DOWN,direction(a0)
     move.w  #0,frame(a0)
     move.w  #2,home_corner_xtile(a0)
+    move.b  #7,pen_dot_limit(a0)    
     move.l  #pink_ghost_frame_table,frame_table(a0)
     move.l  #pink_frightened_ghost_white_frame_table,frightened_ghost_white_frame_table(a0)
     move.l  #pink_frightened_ghost_blue_frame_table,frightened_ghost_blue_frame_table(a0)
@@ -748,6 +804,7 @@ init_ghosts
 	move.w  #(RED_XSTART_POS-16),xpos(a0)
     move.w  #UP,direction(a0)
     move.w  #0,frame(a0)
+    move.b  #17,pen_dot_limit(a0)    
     move.l  #cyan_ghost_frame_table,frame_table(a0)
     move.l  #cyan_frightened_ghost_white_frame_table,frightened_ghost_white_frame_table(a0)
     move.l  #cyan_frightened_ghost_blue_frame_table,frightened_ghost_blue_frame_table(a0)
@@ -762,6 +819,7 @@ init_ghosts
     add.l   #Ghost_SIZEOF,a0
     move.l  #'CLYD',character_id(a0)
 
+    move.b  #32,pen_dot_limit(a0)    
 	move.w  #(RED_XSTART_POS+16),xpos(a0)
     move.w  #UP,direction(a0)
     move.w  #0,frame(a0)
@@ -778,10 +836,10 @@ init_ghosts
     rts
     
 .dot_counter_table_level_1
-    dc.w    0,0,30,60
+    dc.b    0,0,30,60
 .dot_counter_table_level_2
-    dc.w    0,0,0,50
-    
+    dc.b    0,0,0,50
+    even
 
 .behaviour_table
     dc.l    red_chase,pink_chase,cyan_chase,orange_chase
@@ -941,16 +999,7 @@ init_player
     bne.b   .played
     st.b    music_played
     moveq.l #0,d0
-    move.w  music_1_sound+ss_vbl_length,d0
-    ; 50 => 60 hz conv
-    divu.w  #5,d0
-    swap    d0
-    clr.w   d0
-    swap    d0
-    mulu.w  #6,d0
-    swap    d0
-    clr.w   d0
-    swap    d0
+    move.w  music_1_sound+ss_tick_length,d0
     
     move.w  d0,first_ready_timer
     IFNE    RECORD_INPUT_TABLE_SIZE
@@ -968,6 +1017,7 @@ init_player
     ENDC
 
     clr.w   record_input_clock                      ; start of time
+    
     
     move.w  d0,ready_timer
     clr.l   previous_random
@@ -1406,6 +1456,11 @@ draw_all
 ; draw intro screen
 .intro_screen
     bra.b   draw_intro_screen
+; draw intro screen
+.intermission_screen
+    cmp.w   #FIRST_INTERMISSION_LEVEL,level_number
+    beq.b   draw_intermission_screen_level_2
+    rts
     
 .game_start_screen
     tst.w   state_timer
@@ -1420,6 +1475,7 @@ draw_all
     rts
     
 .game_over
+    bsr stop_sounds
     bsr clear_bonus
     bsr write_game_over
     bra.b   .draw_complete
@@ -1454,6 +1510,11 @@ draw_all
     ; timer not running, animate
     bsr animate_power_dots
 
+    cmp.w   #MSG_SHOW,extra_life_message
+    bne.b   .no_extra_life
+    clr.w   extra_life_message
+    bsr     draw_last_life
+.no_extra_life
     cmp.w   #MSG_SHOW,bonus_score_display_message
     bne.b   .no_bonus_score_appear
     clr.w   bonus_score_display_message
@@ -1527,6 +1588,10 @@ draw_all
 .draw_complete
     rts
 
+stop_sounds
+    move.w  #$F,_custom+dmacon
+    rts
+    
 ; < D2: highscore
 write_high_score
     move.w  #232+16,d0
@@ -1585,6 +1650,7 @@ add_to_score:
     bcs.b   .no_play        ; not yet
     
     move.b  #1,extra_life_awarded
+    move.w  #MSG_SHOW,extra_life_message
     add.b   #1,nb_lives
     move.l A0,-(a7)
     lea extra_life_sound(pc),a0
@@ -1777,7 +1843,7 @@ draw_intro_screen
     bra blit_4_planes
     
 .draw_ghost_text
-    lea character_text_table(pc),a0
+    lea character_text_table_en(pc),a0
     move.w  d0,d3
     move.w  d0,d4
     lsl.w   #4,d3
@@ -1796,6 +1862,24 @@ draw_intro_screen
     add.w   d4,d1
 
     bra write_color_string
+    
+draw_intermission_screen_level_2
+    tst.w   state_timer
+    beq.b   .outd
+    
+    ; blit pacman
+    bsr draw_ghosts
+    lea player(pc),a2
+    cmp.w   #LEFT,direction(a2)
+    beq.b   .small
+    bsr draw_big_pacman
+    bra.b   .outd
+.small
+    bsr draw_pacman
+.outd    
+    rts
+
+
     
 ; < D0: 0,1,2,... score index 100,300,500,700 ...
 
@@ -1884,6 +1968,23 @@ clear_plane_any
     movem.l (a7)+,d0-D2/a0-a2
     rts
     
+draw_last_life:
+    lea pac_lives,a0
+    move.b  nb_lives(pc),d3
+    ext     d3
+    subq.w  #2,d3
+    bmi.b   .out
+    lsl.w   #4,d3
+    add.w #NB_BYTES_PER_MAZE_LINE*8,d3
+    moveq.l #-1,d2  ; mask
+
+    lea	screen_data+SCREEN_PLANE_SIZE,a1
+    move.w  d3,d0
+    moveq.l #0,d1
+    bsr blit_plane
+.out
+    rts
+    
 draw_lives:
     lea	screen_data+SCREEN_PLANE_SIZE,a1
     move.l #NB_BYTES_PER_MAZE_LINE*8,d0
@@ -1906,7 +2007,8 @@ draw_lives:
     add.w   #16,d3
     dbf d7,.lloop
 .out
-
+    rts
+    
 draw_bonuses:
     move.w #NB_BYTES_PER_MAZE_LINE*8,d0
     move.w #248-32,d1
@@ -2448,6 +2550,11 @@ update_all
 
 .intro_screen
     bra update_intro_screen
+.intermission_screen
+    cmp.w   #FIRST_INTERMISSION_LEVEL,level_number
+    beq.b   update_intermission_screen_level_2
+    ; other levels
+    rts
     
 .game_start_screen
     tst.w   state_timer
@@ -2806,6 +2913,151 @@ update_intro_screen
 .move_period
     dc.w    0
     
+update_intermission_screen_level_2
+    tst.w   state_timer
+    bne.b   .no_pac_demo_anim_init
+    
+    lea music_2_sound(pc),a0
+    bsr play_fx
+    
+    bsr init_player
+    moveq.l #0,d0
+    bsr init_ghosts
+        
+    lea player(pc),a2
+    clr.w   .move_period
+    move.w  #X_MAX,xpos(a2)
+    move.w  #Y_PAC_ANIM+28,ypos(a2)
+    lea ghosts(pc),a3
+    moveq   #3,d0
+    moveq.w #0,d1
+.ginit
+    move.w   #400,xpos(a3)
+    move.w  ypos(a2),ypos(a3)
+    move.w  #LEFT,direction(a3)
+    move.w  #0,h_speed(a3)
+    add.l   #Ghost_SIZEOF,a3
+    dbf d0,.ginit
+    
+    ; only red moves / is visible
+    lea     ghosts(pc),a3
+    move.w  #-1,h_speed(a3)    
+    move.w  #X_MAX+24,xpos(a3)
+    
+    move.w  #ORIGINAL_TICKS_PER_SEC+ORIGINAL_TICKS_PER_SEC/2,.pac_wait_timer
+
+    
+.no_pac_demo_anim_init
+    lea music_2_sound(pc),a0
+    move.w  state_timer(pc),d0
+    sub.w   #10,d0      ; add time before replays
+    cmp.w   ss_tick_length(a0),d0
+    bne.b   .no_music_replay
+    bsr play_fx
+    
+.no_music_replay
+
+    add.w   #1,state_timer
+      
+    lea     player(pc),a4
+    lea     ghosts(pc),a3
+    move.w  h_speed(a4),d0      ; speed
+    move.w  h_speed(a3),d1      ; speed
+    add.w   #1,.move_period
+
+    move.w  .move_period(pc),d5
+    cmp.w   #-1,h_speed(a3)
+    beq.b   .ghost_attack
+    move.w  d5,d6
+    and.w   #3,d6
+    bne.b   .ghost_attack
+    clr.w   d1  ; slower ghosts
+.ghost_attack
+    
+    cmp.w   #16,d5
+    bne.b   .no_move_reset
+    clr.w   .move_period
+    cmp.w   #-1,h_speed(a3)
+    bne.b   .ghosts_slow
+    ; pacman doesn't move this time
+    clr.w   d0
+    bra.b   .no_move_reset
+.ghosts_slow
+    ; ghosts don't move
+    ; pacman moves 1 more
+    addq.w  #1,d0
+    clr.w   d1
+.no_move_reset
+    tst.w   d0
+    beq.b   .no_pac_anim
+    bsr animate_pacman
+    
+.no_pac_anim
+    tst.w   d1
+    beq.b   .no_ghost_anim
+
+    ; update ghost animations but don't move
+    ; apply speed on ghosts
+    add.w   d1,(xpos,a3)
+    move.w  frame(a3),d2
+    addq.w  #1,d2
+    and.w   #$F,d2
+    move.w  d2,frame(a3)
+
+.no_ghost_anim
+    move.w  (xpos,a4),d2
+    add.w   d0,d2 ; pac
+    cmp.w   #LEFT,direction(a4)
+    bne.b   .pacman_chasing
+
+    lea ghosts(pc),a3
+    cmp.w   #1,h_speed(a3)
+    beq.b   .storex ; turn taken already
+    cmp.w   #8,d2
+    bne.b   .storex
+    
+    lea ghosts(pc),a3
+
+    move.l  color_register(a3),a1
+    lea     frightened_ghosts_blue_palette(pc),a2
+    ; directly change color registers for that sprite
+    move.l  (a2)+,(a1)+
+    move.l  (a2)+,(a1)+
+    move.w  #MODE_FRIGHT,mode(a3)
+    move.w  #1,h_speed(a3)
+  
+    lea ghosts(pc),a3
+    move.w  #RIGHT,d3
+    move.w  d3,(direction,a3)
+    bra.b   .storex2
+.storex
+    cmp.w   #4,d2
+    bcc.b  .storex2
+    tst.w   .pac_wait_timer
+    beq.b   .reverse
+    subq.w  #1,.pac_wait_timer
+    bra.b   .no_pac_demo_anim
+.reverse
+    sub.w   #16,ypos(a4)        ; upper
+    move.w  #1,h_speed(a4)
+    move.w  #RIGHT,direction(a4)
+    move.w  #0,xpos(a4)
+    rts
+    
+.storex2
+    move.w  d2,(xpos,a4)
+.no_pac_demo_anim
+    rts
+.pacman_chasing
+    cmp.w   #X_MAX+18,d2
+    bcs.b   .storex2
+    clr.w   state_timer
+    move.w  #STATE_PLAYING,current_state
+    rts
+.move_period
+     dc.w    0
+.pac_wait_timer
+     dc.w    0
 update_ghosts:
     lea ghosts(pc),a4
     moveq.w #3,d7
@@ -2948,6 +3200,11 @@ update_ghosts:
     move.w  #LEFT,direction(a4)
     bra.b   .next_ghost
 .pen_x_aligned
+    cmp.l   #orange_ghost,a4
+    bne.b   .no_clyde
+    ; clyde exits pen, unlock elroy mode
+    clr.b   elroy_mode_lock
+.no_clyde
     move.w  #UP,direction(a4)
     sub.w   #1,ypos(a4)
     bra.b   .next_ghost
@@ -2994,7 +3251,13 @@ update_ghosts:
 
 ; < A4: ghost struture    
 .can_exit_pen
-    tst.w   pen_nb_dots(a4)
+    cmp.l   #ghosts,a4
+    beq.b   .exit_pen_ok        ; blinky cannot be trapped in the pen
+    tst.b   pen_exit_override_flag(a4)
+    bne.b   .exit_pen_ok
+    tst.b   a_life_was_lost
+    bne.b   .no_exit_pen
+    tst.b   pen_nb_dots(a4)
     beq.b   .exit_pen_ok
 .no_exit_pen    
     clr.l   d0
@@ -3014,6 +3277,7 @@ update_ghosts:
     bne.b   .nothing
     ; reached target tile: respawn
     move.l  previous_mode_timer(a4),mode_timer(a4)  ; hack also restores mode
+    clr.b   pen_exit_override_flag(a4)              ; else would exit immediately
     move.l  a4,a0
     bsr     set_normal_ghost_palette
     ; check if other ghosts are in "eyes" mode
@@ -3577,27 +3841,12 @@ update_pac
     ; return without doing nothing!!
     rts
     
-.okmove    
-    move.w  speed_table_index(a4),d1
-    add.w   #1,d1
-    cmp.w   #16,d1
-    bne.b   .nowrap
-    moveq   #0,d1
-.nowrap
-    ; store
-    move.w  d1,speed_table_index(a4)
-    move.l  global_speed_table(pc),a1
-    ; faster when at least one ghost is in fright mode
-    tst.w   fright_timer
-    beq.b   .no_fright
-    add.w   #32,d1      ; pacman is faster when ghosts are frightened
-.no_fright
-    move.b  (a1,d1.w),d0    ; speed
-    beq.b   .skip_move      ; if zero skip move
-    ext.w   d0
+.okmove
+    bsr .compute_player_speed
+
     ; store current speed
     move.w  d0,player_speed
-    
+
     ; pre turn timer
     tst.w  prepost_turn(a4)
     beq.b   .ptzero
@@ -3760,19 +4009,35 @@ update_pac
     move.b  #1,still_timer(a4)      ; still during 1 frame
     bsr clear_dot
     add.b  #1,nb_dots_eaten
+    add.b  #1,ghost_release_dot_counter    
 .score
     ; dot
-    move.l  ghost_which_counts_dots(pc),a3
+    move.l  ghost_which_counts_dots(pc),a3  ; also the next ghost to leave pen
 .retry
     cmp.l   #ghosts+4*Ghost_SIZEOF,a3
     beq.b   .no_need_to_count_dots
-    tst.w   pen_nb_dots(a3)
+    tst.b   a_life_was_lost
+    beq.b   .normal_dot_ghost_count
+    ; when a life was lost (until counter resets), an alternate way is enabled
+    ; to control when ghosts can exit from pen
+    move.b  pen_dot_limit(a3),d0
+    cmp.b   ghost_release_dot_counter(pc),d0        ; exact number (7,17,32)
+    bne.b   .no_need_to_count_dots
+    ; force ghost to exit pen immediately
+    st.b    pen_exit_override_flag(a3)
+    ; if this is the last ghost (clyde), then cancel global flag
+    cmp.l   #orange_ghost,a3
+    bne.b   .no_need_to_count_dots
+    clr.b   a_life_was_lost
+    bra.b   .no_need_to_count_dots
+.normal_dot_ghost_count
+    tst.b   pen_nb_dots(a3)
     bne.b   .do_ghost_count
     add.l   #Ghost_SIZEOF,a3
     move.l  a3,ghost_which_counts_dots
     bra.b   .retry
 .do_ghost_count
-    sub.w   #1,pen_nb_dots(a3)
+    sub.b   #1,pen_nb_dots(a3)
 .no_need_to_count_dots
     move.b  nb_dots_eaten(pc),d4
     tst.w   bonus_timer
@@ -3949,6 +4214,26 @@ update_pac
 .no_hmove
     rts
 
+.compute_player_speed
+    move.w  speed_table_index(a4),d1
+    add.w   #1,d1
+    cmp.w   #16,d1
+    bne.b   .nowrap
+    moveq   #0,d1
+.nowrap
+    ; store
+    move.w  d1,speed_table_index(a4)
+    move.l  global_speed_table(pc),a1
+    ; faster when at least one ghost is in fright mode
+    tst.w   fright_timer
+    beq.b   .no_fright
+    add.w   #32,d1      ; pacman is faster when ghosts are frightened
+.no_fright
+    move.b  (a1,d1.w),d0    ; speed
+    beq.b   .skip_move      ; if zero skip move
+    ext.w   d0
+    rts
+    
     IFNE    RECORD_INPUT_TABLE_SIZE
 record_input:
     cmp.l   previous_joystick_state(pc),d0
@@ -4071,6 +4356,76 @@ draw_pacman:
 ;;    subq.l  #1,a1   ; even address, always!
 ;;.ok
     move.l  a1,previous_pacman_address
+    rts
+
+draw_big_pacman:
+    lea     player(pc),a2
+.normal    
+    lea  big_pac_table(pc),a0
+    move.w  frame(a2),d0
+    add.w   d0,d0
+    add.w   d0,d0
+    move.l  (a0,d0.w),a0
+.pacblit
+    lea	screen_data+SCREEN_PLANE_SIZE,a1
+    move.w  xpos(a2),d0
+    move.w  ypos(a2),d1
+    ; center => top left
+    moveq.l #-1,d3 ; first/last word mask
+    sub.w  #8+Y_START,d1
+    sub.w  #8+X_START,d0
+    bpl.b   .no_left
+    ; d0 is negative
+    neg.w   d0
+    lsr.l   d0,d3
+    neg.w   d0
+    add.w   #NB_BYTES_PER_LINE*8,d0
+    subq.w  #1,d1
+    bra.b   .pdraw
+.no_left
+    ; check mask to the right
+;;    move.w  d0,d4    
+;;    sub.w   #X_MAX-24-X_START,d4
+;;    bmi.b   .pdraw
+;;    lsl.l   d4,d3
+;;    lsl.l   #8,d3
+;;    lsl.l   #8,d3
+.pdraw
+    ; clear left row
+    move.l  previous_pacman_address(pc),a3
+    move.w  #31,d4
+.c
+    clr.b   (a3)
+    clr.b   (-1,a3)
+    add.w   #NB_BYTES_PER_LINE,a3
+    dbf.b   d4,.c
+    
+    move.w  #6,d2   ; 32+16
+    move.w  #32,d4
+
+    bsr blit_plane_any
+
+    move.l  a1,previous_pacman_address    
+    ; now hack to clip zones without reducing blit width
+    ; this is super-dirty I know. But this is not a game engine...
+    
+    lea screen_data+SCREEN_PLANE_SIZE+(Y_PAC_ANIM-20)*NB_BYTES_PER_LINE+X_MAX/8-1,a3
+    move.w  #31,d4
+
+    bsr wait_blit
+
+.clip
+    clr.l   (a3)
+    add.w   #NB_BYTES_PER_LINE,a3
+    dbf.b   d4,.clip    
+    
+    lea screen_data+SCREEN_PLANE_SIZE+(Y_PAC_ANIM-20)*NB_BYTES_PER_LINE-4,a3
+    move.w  #31,d4
+.clip2
+    clr.l   (a3)
+    add.w   #NB_BYTES_PER_LINE,a3
+    dbf.b   d4,.clip2
+    
     rts
         
 ; < d0.w: x
@@ -4676,6 +5031,12 @@ maze_blink_nb_times
     dc.b    0
 nb_lives
     dc.b    0
+elroy_mode_lock:
+    dc.b    0
+a_life_was_lost:
+    dc.b    0
+ghost_release_dot_counter
+    dc.b    0
 nb_dots_eaten
     dc.b    0
 invincible_cheat_flag
@@ -4696,11 +5057,13 @@ elroy_threshold_2
     dc.b    0
     even
 
-bonus_display_message
+bonus_display_message:
     dc.w    0
-bonus_score_display_message
+bonus_score_display_message:
     dc.w    0
-clear_ready_message
+clear_ready_message:
+    dc.w    0
+extra_life_message:
     dc.w    0
     
 score_table
@@ -4710,8 +5073,9 @@ fruit_score     ; must follow score_table
 loop_array:
     dc.l    0,0,0,0
     
-    
-    
+big_pac_table:
+    dc.l    big_pac_2,big_pac_2,big_pac_0,big_pac_1,big_pac_1,big_pac_0
+
 player_kill_anim_table:
     REPT    NB_TICKS_PER_SEC/2
     dc.b    1
@@ -4864,11 +5228,16 @@ fifty_pts_string:
     dc.b    "50 pts",0
 ten_pts_string:
     dc.b    "10 pts",0
-character_text_table
+character_text_table_jp
     dc.l    oiake,akabei,$F00,0
     dc.l    machibuse,pinky,$0fbf,0
     dc.l    kimagure,aosuke,$00ff,0
     dc.l    otobuke,guzuta,$0fb5,0
+character_text_table_en
+    dc.l    shadow,blinky,$F00,0
+    dc.l    speedy,pinky,$0fbf,0
+    dc.l    bashful,inky,$00ff,0
+    dc.l    pokey,clyde,$0fb5,0
 oiake:
     dc.b    "OIKAKE----",0
 akabei:
@@ -4885,6 +5254,22 @@ otobuke:
     dc.b    "OTOBUKE---",0
 guzuta:
     dc.b    '"GUZUTA"',0
+    
+shadow:
+    dc.b    "-SHADOW    ",0
+blinky:
+    dc.b    '"BLINKY"',0
+speedy:
+    dc.b    "-SPEEDY    ",0
+
+bashful:
+    dc.b    "-BASHFUL   ",0
+inky:
+    dc.b    '"INKY"',0
+pokey:
+    dc.b    "-POKEY     ",0
+clyde:
+    dc.b    '"CLYDE"',0
 
     even
 
@@ -5045,6 +5430,8 @@ get_ghost_move_speed:
 ; trashes: none
 get_elroy_level:
     moveq   #0,d0
+    tst.b   elroy_mode_lock
+    bne.b   .out
     cmp.l   #ghosts,a0
     bne.b   .out
     move.w  d1,-(a7)
@@ -5070,6 +5457,8 @@ get_elroy_level:
 ; trashes: none
 is_elroy:
     moveq   #0,d0
+    tst.b   elroy_mode_lock
+    bne.b   .out
     cmp.l   #ghosts,a0
     bne.b   .out
     move.w  d1,-(a7)
@@ -5097,6 +5486,7 @@ is_elroy:
     UWORD   ss_nb_repeats
     UWORD   ss_current_repeat
     UWORD   ss_vbl_length       ; auto compute
+    UWORD   ss_tick_length       ; auto compute
     UWORD   ss_current_vbl
     
     LABEL   Sound_SIZEOF
@@ -5219,7 +5609,9 @@ SOUND_ENTRY:MACRO
     dc.w    (\1_raw_end-\1_raw)/2,FXFREQBASE/SOUNDFREQ,64
     dc.b    \3
     dc.b    $01
-    dc.w    \2,0,NB_TICKS_PER_SEC*(\1_raw_end-\1_raw)/SOUNDFREQ
+    dc.w    \2,0
+    dc.w    NB_TICKS_PER_SEC*(\1_raw_end-\1_raw)/SOUNDFREQ
+    dc.w    ORIGINAL_TICKS_PER_SEC*(\1_raw_end-\1_raw)/SOUNDFREQ
 \1_sound_end
     ds.b    \1_sound_end-\1_sound+Sound_SIZEOF,0
     ENDM
@@ -5240,6 +5632,7 @@ SOUND_ENTRY:MACRO
     SOUND_ENTRY loop_fright,-1,0
     SOUND_ENTRY loop_eyes,-1,0
     SOUND_ENTRY music_1,0,0
+    SOUND_ENTRY music_2,0,0
 
     dc.l    0
     
@@ -5273,7 +5666,7 @@ elroy_table:
     dc.b    120
 
     even
- ; speed table at 60 Hz. Not compatible with 50 Hz if we want roughly same speed
+ ; speed table at 60 Hz
 speed_table:  ; lifted from https://github.com/shaunlebron/pacman/blob/master/src/Actor.js
     dc.l    speeds_level1,speeds_level2_4,speeds_level2_4,speeds_level2_4
     dc.l    speeds_level5_20,speeds_level5_20,speeds_level5_20,speeds_level5_20,speeds_level5_20,speeds_level5_20
@@ -5410,6 +5803,7 @@ red_ghost:      ; needed by cyan ghost
 pink_ghost:      ; needed by cyan ghost
     ds.b    Ghost_SIZEOF
     ds.b    Ghost_SIZEOF
+orange_ghost:        ; needed to unlock elroy mode
     ds.b    Ghost_SIZEOF
 
 ; BSS --------------------------------------
@@ -5510,6 +5904,13 @@ ghost_bob_table:
     incbin  "pink_ghost_bob.bin"
     incbin  "cyan_ghost_bob.bin"
     incbin  "orange_ghost_bob.bin"
+
+big_pac_0
+    incbin  "big_pac_0.bin"
+big_pac_1
+    incbin  "big_pac_1.bin"
+big_pac_2
+    incbin  "big_pac_2.bin"
     
 pac_left_0
     incbin  "pac_left_0.bin"
@@ -5563,11 +5964,7 @@ bonus_scores:
     incbin  "bonus_scores_3.bin"    ; 700
 
     even
-black_sprite:
-    dc.l    0   ; control word
-    REPT    16
-    dc.l    $FFFFFFFF
-    ENDR
+
     
 
     
@@ -5714,6 +6111,10 @@ music_1_raw
     incbin  "music_1.raw"
     even
 music_1_raw_end
+music_2_raw
+    incbin  "music_2.raw"
+    even
+music_2_raw_end
 
 bonus_eaten_raw
     incbin  "bonus_eaten.raw"

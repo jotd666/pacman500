@@ -5,7 +5,7 @@ sox = r"k:\progs\sox-14-4-2\sox.exe"
 wav_files = ["pacman_killed.wav","credit.wav","eat_1.wav","eat_2.wav",
 "extra_life.wav","ghost_eaten.wav","bonus_eaten.wav","loop_1.wav","loop_2.wav",
 "loop_3.wav","loop_4.wav","loop_5.wav","loop_fright.wav",
-"music_1.wav","loop_eyes.wav"]
+"music_1.wav","music_2.wav","loop_eyes.wav"]
 outdir = "../sounds"
 
 sampling_rate = 22500
