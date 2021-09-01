@@ -401,15 +401,19 @@ intro:
     lea _custom,a5
     move.w  #$7FFF,(intena,a5)
 
-    ; do it first, as the last bonus overwrites bottom left of screen
-    bsr draw_bonuses
     
     ; on some levels, there's an intermission sequence
 
     cmp.w  #FIRST_INTERMISSION_LEVEL,level_number
     bne.b   .no_intermission
+
     
     bsr wait_bof
+
+    subq.w  #1,level_number
+    bsr draw_bonuses
+    addq.w  #1,level_number
+
     clr.w  state_timer
 
     move.w  #STATE_INTERMISSION_SCREEN,current_state
@@ -431,6 +435,10 @@ intro:
     move.w  #$7FFF,(intena,a5)
     bsr stop_sounds
 .no_intermission
+    bsr wait_bof
+    
+    ; do it first, as the last bonus overwrites bottom left of screen
+    bsr draw_bonuses    
     bsr draw_maze
    
     ; for debug
@@ -601,12 +609,24 @@ init_level:
     clr.b  nb_dots_eaten
     clr.b   elroy_mode_lock
     clr.b   a_life_was_lost
+        
+    ; global dot counter for ghosts to exit pen
+    clr.b   ghost_release_dot_counter
     
     ; speed table
     add.w   d2,d2
     lea speed_table(pc),a1
     move.l  (a1,d2.w),a1    ; global speed table
     move.l  a1,global_speed_table
+
+    ; timer just in case pacman doesn't eat any dots
+    move.w  #4*ORIGINAL_TICKS_PER_SEC,d0
+    cmp.w   #5,level_number
+    bcs.b   .below_level_5
+    move.w  #3*ORIGINAL_TICKS_PER_SEC,d0        ; 3 seconds from level 5
+.below_level_5    
+    move.w  d0,ghost_release_override_max_time
+    clr.w   ghost_release_override_timer
     
     rts
 
@@ -697,8 +717,9 @@ init_ghosts
     moveq.w #3,d7
     lea _custom+color+32,a4
     
-    ; init ghost dot count table
-    move.l  #ghosts+2*Ghost_SIZEOF,ghost_which_counts_dots
+    ; init ghost dot count table, start with pinky
+    ; pinky exits right away unless a life is lost
+    move.l  #ghosts+1*Ghost_SIZEOF,ghost_which_counts_dots
     ; init pen tile
     move.l  #(RED_XSTART_POS>>3)<<16+(OTHERS_YSTART_POS>>3),pen_tile_xy
     
@@ -716,10 +737,11 @@ init_ghosts
     
     tst.b   d4
     bne.b   .no_reset
-    clr.w   mode_counter(a0)
+
     clr.w   speed_table_index(a0)
     clr.b   pen_nb_dots(a0)
 .no_reset    
+    clr.w   mode_counter(a0)
     clr.w   pen_timer(a0)
     clr.b   reverse_flag(a0)
     clr.b   pen_exit_override_flag(a0)
@@ -2966,6 +2988,8 @@ update_intermission_screen_level_2
     add.w   #1,.move_period
 
     move.w  .move_period(pc),d5
+    cmp.w   #8,d5
+    beq.b   .no_pac_demo_anim       ; nothing moves
     cmp.w   #-1,h_speed(a3)
     beq.b   .ghost_attack
     move.w  d5,d6
@@ -3049,7 +3073,7 @@ update_intermission_screen_level_2
 .no_pac_demo_anim
     rts
 .pacman_chasing
-    cmp.w   #X_MAX+18,d2
+    cmp.w   #X_MAX+19,d2
     bcs.b   .storex2
     clr.w   state_timer
     move.w  #STATE_PLAYING,current_state
@@ -3247,6 +3271,34 @@ update_ghosts:
     move.w  (a7)+,d7
     add.l   #Ghost_SIZEOF,a4
     dbf d7,.gloop
+    
+    ; handle global timer to release ghosts (after a life was lost)
+    tst.b   a_life_was_lost
+    beq.b   .no_life_lost
+    ; increase timer
+
+    move.w  ghost_release_override_timer(pc),d0
+    cmp.w   ghost_release_override_max_time(pc),d0
+    beq.b   .max_time_reached
+    addq.w  #1,d0
+    move.w  d0,ghost_release_override_timer
+    bra.b   .no_life_lost
+    
+.max_time_reached
+    move.l  ghost_which_counts_dots(pc),a4  ; also the next ghost to leave pen
+    clr.w   ghost_release_override_timer
+    ; release the next ghost
+    st.b    pen_exit_override_flag(a4)
+    ; next ghost count dots using global counter
+    add.l   #Ghost_SIZEOF,a4
+    move.l  a4,ghost_which_counts_dots
+    cmp.l   #ghosts+4*Ghost_SIZEOF,a4
+    bne.b   .no_last_ghost
+    ; all ghosts are out: clear flag, elroy resumes as normal
+    clr.b   a_life_was_lost
+.no_last_ghost
+    
+.no_life_lost
     rts
 
 ; < A4: ghost struture    
@@ -3977,8 +4029,8 @@ update_pac
     ; save A1
     move.l  A1,A2
     bsr power_pill_taken
-    add.b  #1,nb_dots_eaten
-
+    bsr .dot_eaten
+    
     move.l  A2,A1
     
     move.b  #3,still_timer(a4)      ; still during 3 frames
@@ -4008,8 +4060,7 @@ update_pac
     bsr play_fx
     move.b  #1,still_timer(a4)      ; still during 1 frame
     bsr clear_dot
-    add.b  #1,nb_dots_eaten
-    add.b  #1,ghost_release_dot_counter    
+    bsr .dot_eaten
 .score
     ; dot
     move.l  ghost_which_counts_dots(pc),a3  ; also the next ghost to leave pen
@@ -4025,8 +4076,13 @@ update_pac
     bne.b   .no_need_to_count_dots
     ; force ghost to exit pen immediately
     st.b    pen_exit_override_flag(a3)
-    ; if this is the last ghost (clyde), then cancel global flag
-    cmp.l   #orange_ghost,a3
+    ; next ghost count dots using global counter
+    add.l   #Ghost_SIZEOF,a3
+    move.l  a3,ghost_which_counts_dots
+
+    ; if this was the last ghost (clyde), then cancel global flag
+    ; allowing elroy mode to resume if was locked
+    cmp.l   #orange_ghost+Ghost_SIZEOF,a3
     bne.b   .no_need_to_count_dots
     clr.b   a_life_was_lost
     bra.b   .no_need_to_count_dots
@@ -4232,6 +4288,12 @@ update_pac
     move.b  (a1,d1.w),d0    ; speed
     beq.b   .skip_move      ; if zero skip move
     ext.w   d0
+    rts
+    
+.dot_eaten
+    add.b  #1,nb_dots_eaten
+    add.b  #1,ghost_release_dot_counter    
+    clr.w   ghost_release_override_timer
     rts
     
     IFNE    RECORD_INPUT_TABLE_SIZE
@@ -5027,9 +5089,13 @@ fright_timer:
     dc.w    0
 death_frame_offset
     dc.w    0
+ghost_release_override_max_time:
+    dc.w    0
+ghost_release_override_timer:
+    dc.w    0
 maze_blink_nb_times
     dc.b    0
-nb_lives
+nb_lives:
     dc.b    0
 elroy_mode_lock:
     dc.b    0

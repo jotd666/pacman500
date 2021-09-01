@@ -2,20 +2,20 @@ bugs:
 
 - pac leaving a few pixels behind
 - pt player sample play issues: yes but covered by sound loop!!
-- pacman super speed sometimes: flash when speed is 2 several times in a row
+- pacman super speed sometimes: flash when speed is 2 several times in a row: level 3 happens!!
 - demo mode (record input not replaying properly!!)
 - pacman traverses ghosts sometimes
-- check clyde target sometimes upper left WTF!!
+- check clyde target sometimes upper left WTF!! add debug
 - .compute_player_speed: call only when a move must be made
 - eye-return sound loop not correct
+- there is the obvious 'Game Over' text staying up even when playing: not reproduced
+- I also had to downgrade to OCS display in the Boot Menu as AGA gave corrupted graphics: not reproduced
+- game over: intro text shifted (draw timer vs update timer bug!!!)
 
 todo:
 
-- leave pen behaviour after a life is lost: coded, but wrong!!!!!!!!!!!!!!!!!!!!!
-- elroy behaviour after a life is lost: coded!!
-- intermission level 2: longer so the music can end
 - intermission sequences:
-  * 3"20 (after level 2): ghost chases pacman, big pacman chases back
+  * 3"20 (after level 2): ghost chases pacman, big pacman chases back => DONE
   * 7"50 (after level 5): ghost chases pacman, tears his drape on a nail
   * 13"00 (after level 9): ghost chases pacman with repaired drape, but returns almost naked
   * 18"00 (after level 13): same as before
