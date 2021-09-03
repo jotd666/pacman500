@@ -1,16 +1,26 @@
 bugs:
 
-- pac leaving a few pixels behind
-- pt player sample play issues: yes but covered by sound loop!!
-- pacman super speed sometimes: flash when speed is 2 several times in a row: level 3 happens!!
-- demo mode (record input not replaying properly!!)
+- pacman super speed sometimes: grape level even without 50/60 hack
+  => LOGPC and check when it happens
+- inky trapped in pen in the end of level
 - pacman traverses ghosts sometimes
-- check clyde target sometimes upper left WTF!! add debug
-- .compute_player_speed: call only when a move must be made
-- eye-return sound loop not correct
-- there is the obvious 'Game Over' text staying up even when playing: not reproduced
-- I also had to downgrade to OCS display in the Boot Menu as AGA gave corrupted graphics: not reproduced
-- game over: intro text shifted (draw timer vs update timer bug!!!)
+- 0-time power pill: ghosts don't change direction
+
+minor issues:
+
+- reset "frightened" palette to blue (for intro)
+- pt player sample play issues: yes but covered by sound loop!!
+- demo mode (record input not replaying properly!!)
+- after game over: intro text shifted (draw timer vs update timer bug!!!)
+- pac leaving a few pixels behind
+- when end of level flashes, galaxian flashes too. Maybe instead of palette change
+  just draw the maze on another plane to activate white
+
+reported, not reproduced:
+
+- 'Game Over' text staying up even when playing
+- I also had to downgrade to OCS display in the Boot Menu as AGA gave corrupted graphics
+
 
 todo:
 

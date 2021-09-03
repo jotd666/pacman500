@@ -109,6 +109,12 @@
    "start_x":0,
    "start_y":144
  },
+  {
+  "name":"bonus_score_200",
+   "frames":1,
+   "start_x":84,
+   "start_y":144
+ },
 
 
  {

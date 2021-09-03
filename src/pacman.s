@@ -600,6 +600,7 @@ init_level:
     lsr.w   #1,d0   ; half
     move.b  d0,elroy_threshold_2
     
+    
     add.w   d2,d2
 
     lea bonus_level_score(pc),a0
@@ -609,7 +610,8 @@ init_level:
     clr.b  nb_dots_eaten
     clr.b   elroy_mode_lock
     clr.b   a_life_was_lost
-        
+    
+    
     ; global dot counter for ghosts to exit pen
     clr.b   ghost_release_dot_counter
     
@@ -630,6 +632,7 @@ init_level:
     
     rts
 
+; draw score with titles and extra 0
 draw_score:
     lea	screen_data+SCREEN_PLANE_SIZE*3,a1  ; white
     lea p1_string(pc),a0
@@ -652,8 +655,34 @@ draw_score:
     add.w  #8,d1
     bsr write_string
 
+    move.l  score(pc),d2
+    bsr     draw_current_score
+    
     move.l  high_score(pc),d2
-    bra     write_high_score
+    bsr     write_high_score
+
+    lea level_string(pc),a0
+    move.w  #232,d0
+    move.w  #48+24,d1
+    bsr write_string
+
+    moveq.l #1,d2
+    add.w  level_number(pc),d2
+    move.w  #232+48,d0
+    move.w  #48+24+8,d1
+    move.w  #3,d3
+    bra write_decimal_number
+
+    rts
+    
+; < D2 score
+; trashes D0-D3
+draw_current_score:
+    move.w  #232+16,d0
+    move.w  #24,d1
+    move.w  #6,d3
+    bra write_decimal_number
+    
     
 hide_sprites:
     move.w  #7,d1
@@ -916,11 +945,15 @@ cyan_chase
     movem.l (a7)+,d2/a2
     rts
     
+; clyde/orange ghost behaviour
+
 orange_chase
     movem.l a0/d2-d6,-(a7)      ; uses an awful lot of registers
     ; compute distance between clyde and pacman
+
     move.w  d0,d2       ; pacman XY tile
     move.w  d1,d3
+
     move.w  xpos(a0),d4
     move.w  ypos(a0),d5
     lsr.w   #3,d4   ; ghost XY tile
@@ -932,7 +965,7 @@ orange_chase
     bcc.b   .simple     ; run to pacman tile if far away enough
     ; close to pacman: target is the home tile, like scatter mode
     move.w  home_corner_xtile(a0),d0
-    move.w  home_corner_xtile(a1),d1
+    move.w  home_corner_ytile(a0),d1
 .simple
     rts
     
@@ -1081,10 +1114,10 @@ ghost_debug
     
     move.w  #DEBUG_X,d0
     add.w  #8,d1
-    lea .pink(pc),a0
+    lea .orange(pc),a0
     bsr write_string
 
-    add.l   #Ghost_SIZEOF,a2
+    add.l   #Ghost_SIZEOF*3,a2
     bsr .debug_ghost
 
     
@@ -1118,7 +1151,18 @@ ghost_debug
     lsl.w   #3,d0
     add.w  #DEBUG_X,d0
     clr.l   d2
-    move.w  xpos(a2),d2
+    move.w  target_xtile(a2),d2
+    move.w  #3,d3
+    bsr write_decimal_number
+    add.w  #8,d1
+    
+    move.w  #DEBUG_X,d0
+    lea .gy(pc),a0
+    bsr write_string
+    lsl.w   #3,d0
+    add.w  #DEBUG_X,d0
+    clr.l   d2
+    move.w  target_ytile(a2),d2
     move.w  #3,d3
     bsr write_decimal_number
     
@@ -1169,8 +1213,12 @@ ghost_debug
     dc.b    "ELROY ",0
 .pink
     dc.b    "PINK",0
+.orange
+    dc.b    "CLYDE",0
 .gx
         dc.b    "GX ",0
+.gy
+        dc.b    "GY ",0
         even
 
         
@@ -1502,6 +1550,9 @@ draw_all
     bsr write_game_over
     bra.b   .draw_complete
 .playing
+    ; update sound loops here, loop frequency is based on VBL
+    bsr update_sound_loops
+
     tst.w   clear_ready_message
     beq.b   .no_ready_clr
     clr.w   clear_ready_message
@@ -1530,26 +1581,21 @@ draw_all
     bsr draw_pacman
         
     ; timer not running, animate
-    bsr animate_power_dots
+    bsr animate_power_pills
 
     cmp.w   #MSG_SHOW,extra_life_message
     bne.b   .no_extra_life
     clr.w   extra_life_message
     bsr     draw_last_life
 .no_extra_life
-    cmp.w   #MSG_SHOW,bonus_score_display_message
-    bne.b   .no_bonus_score_appear
-    clr.w   bonus_score_display_message
-    move.w  fruit_score_index(pc),d0
-    bsr draw_bonus_score
-    bra.b   .no_bonus_score_disappear
-.no_bonus_score_appear
     cmp.w   #MSG_HIDE,bonus_score_display_message
     bne.b   .no_bonus_score_disappear
     clr.w   bonus_score_display_message
-    move.w  #BONUS_X_POS,d0
+    move.w  #BONUS_X_POS-8,d0
     move.w  #BONUS_Y_POS,d1
-    move.w  #4,d2
+    move.w  #5,d2
+    ; we know that this color is only on 2 planes
+    ; (convieniently 2 planes where pacman isn't drawn!)
     lea	screen_data,a1
     move.w  #3,d3
     bsr clear_plane_any
@@ -1572,6 +1618,12 @@ draw_all
     clr.w   bonus_display_message
     bsr clear_bonus
 .no_fruit_disappear
+    cmp.w   #MSG_SHOW,bonus_score_display_message
+    bne.b   .no_bonus_score_appear
+    clr.w   bonus_score_display_message
+    move.w  fruit_score_index(pc),d0
+    bsr draw_bonus_score
+.no_bonus_score_appear
     ; score
     lea	screen_data+SCREEN_PLANE_SIZE*3,a1  ; white
     
@@ -1579,14 +1631,11 @@ draw_all
     move.l  displayed_score(pc),d1
     cmp.l   d0,d1
     beq.b   .no_score_update
-    move.l  d0,d2
     
     move.l  d0,displayed_score
 
-    move.w  #232+16,d0
-    move.w  #24,d1
-    move.w  #6,d3
-    bsr write_decimal_number
+    move.l  d0,d2
+    bsr draw_current_score
     
     move.l  high_score(pc),d4
     cmp.l   d2,d4
@@ -1628,8 +1677,8 @@ write_game_over
     lea game_over_string(pc),a0
     bra write_color_string
     
-animate_power_dots    
-    move.w  power_dot_timer(pc),d0
+animate_power_pills    
+    move.w  power_pill_timer(pc),d0
     cmp.w   #1,d0
     bcc.b   .nospd
     lea  powerdots(pc),a0
@@ -1638,7 +1687,7 @@ animate_power_dots
     move.l  (a0)+,d1 
     beq.b   .zap_draw
     move.l  d1,a1
-    bsr draw_power_dot
+    bsr draw_power_pill
 .zap_draw    
     dbf d0,.drawpdloop
     bra.b   .powerdot_done
@@ -1656,7 +1705,7 @@ animate_power_dots
     move.l  (a0)+,d1
     beq.b   .zap_clear
     move.l  d1,a1
-    bsr clear_power_dot
+    bsr clear_power_pill
 .zap_clear    
     dbf d0,.clrpdloop
 .powerdot_done
@@ -1699,10 +1748,10 @@ X_DOT = 120
 Y_DOT = 160
 
 Y_PAC_ANIM = 136
-X_DEMO_POWER_DOT = 48
+X_DEMO_power_pill = 48
 DEMO_PACMAN_TIMER = NB_TICKS_PER_SEC*14
 DEMO_DOT_SCORE_TIMER = NB_TICKS_PER_SEC*12
-DEMO_POWER_DOT_TIMER = NB_TICKS_PER_SEC*13
+DEMO_power_pill_TIMER = NB_TICKS_PER_SEC*13
 
 DRAW_GHOST_INFO:MACRO
     cmp.w   #NB_TICKS_PER_SEC*(\2*3+1),state_timer
@@ -1803,7 +1852,7 @@ draw_intro_screen
     lea	screen_data+DOT_PLANE_OFFSET+X_DOT/8+(Y_DOT+16)*NB_BYTES_PER_LINE,a1
     lea  powerdots+4(pc),a0
     move.l  a1,(a0)+
-    bsr draw_power_dot
+    bsr draw_power_pill
     ; 2 other power dots invalidated
     clr.l   (a0)+
     clr.l   (a0)+
@@ -1814,12 +1863,12 @@ draw_intro_screen
     bsr write_color_string
 .no_dot_score
 
-    cmp.w   #DEMO_POWER_DOT_TIMER,state_timer
-    bne.b   .no_power_dot
-    lea	screen_data+DOT_PLANE_OFFSET+X_DEMO_POWER_DOT/8+Y_PAC_ANIM*NB_BYTES_PER_LINE,a1
+    cmp.w   #DEMO_power_pill_TIMER,state_timer
+    bne.b   .no_power_pill
+    lea	screen_data+DOT_PLANE_OFFSET+X_DEMO_power_pill/8+Y_PAC_ANIM*NB_BYTES_PER_LINE,a1
     lea  powerdots(pc),a0
     move.l  a1,(a0)+
-    bsr draw_power_dot
+    bsr draw_power_pill
         
     ; namco logo
     lea namco,a0
@@ -1834,7 +1883,7 @@ draw_intro_screen
     move.w  #X_DOT,d0
     move.w  #224,d1
     bsr blit_plane_any
-.no_power_dot
+.no_power_pill
     
     cmp.w   #DEMO_PACMAN_TIMER,state_timer
     bcs.b   .dont_draw_characs
@@ -1843,7 +1892,7 @@ draw_intro_screen
     bsr draw_pacman
     
     ; animate dots
-    bsr animate_power_dots
+    bsr animate_power_pills
 .dont_draw_characs    
     rts
     
@@ -1903,13 +1952,15 @@ draw_intermission_screen_level_2
 
 
     
-; < D0: 0,1,2,... score index 100,300,500,700 ...
+; < D0: 0,1,2,... score index 100,200 (not possible),300,500,700,1000,2000,3000,5000 ...
+
+THOUSAND_LIMIT = 5
 
 draw_bonus_score:
     move.w  d0,d3
-    cmp.w   #4,d0
+    cmp.w   #THOUSAND_LIMIT,d0
     bcs.b   .under_thousand
-    sub.w   #4,d0
+    sub.w   #THOUSAND_LIMIT,d0
 .under_thousand
     lsl.w   #6,d0       ; *64
     lea bonus_scores,a0
@@ -1918,7 +1969,7 @@ draw_bonus_score:
     move.l  a1,a2
     ; change x when >= 1000
     moveq.w  #10,d0
-    cmp.w   #4,d3
+    cmp.w   #THOUSAND_LIMIT,d3
     bcs.b   .no_extra_zero1
     ; extra zero: x is more to the left
     moveq.l  #6,d0    
@@ -1928,7 +1979,7 @@ draw_bonus_score:
     bsr blit_plane
     lea (SCREEN_PLANE_SIZE*3,a2),a1
     moveq.l  #10,d0
-    cmp.w   #4,d3
+    cmp.w   #THOUSAND_LIMIT,d3
     bcs.b   .no_extra_zero2
     moveq.l  #6,d0    
 .no_extra_zero2
@@ -1936,7 +1987,7 @@ draw_bonus_score:
     moveq.l #-1,d2
     bsr blit_plane
     
-    cmp.w   #4,d3
+    cmp.w   #THOUSAND_LIMIT,d3
     bcs.b   .no_extra_zero
     bsr wait_blit       ; wait else blit is going to write concurrently
     add.l  #NB_BYTES_PER_LINE*4,a2
@@ -2268,7 +2319,7 @@ draw_dots:
     bra.b   .next
 .big
     move.l  a1,(a2)+        ; store powerdot address
-    bsr draw_power_dot
+    bsr draw_power_pill
 
 .next
     addq.l  #1,a1
@@ -2280,7 +2331,7 @@ draw_dots:
 
 ; < A1 address
 ; trashes: none
-draw_power_dot
+draw_power_pill
     move.b  #%00111100,(a1)
     move.b  #%01111110,(NB_BYTES_PER_LINE*1,a1)
     move.b  #%11111111,(NB_BYTES_PER_LINE*2,a1)
@@ -2292,7 +2343,7 @@ draw_power_dot
     rts
     
 ; < A1 address
-clear_power_dot
+clear_power_pill
     clr.b  (a1)
     clr.b  (NB_BYTES_PER_LINE*1,a1)
     clr.b  (NB_BYTES_PER_LINE*2,a1)
@@ -2586,11 +2637,12 @@ update_all
     rts
     
 .life_lost
-    rts  ; bra update_power_dot_flashing
+    rts  ; bra update_power_pill_flashing
 
 .level_completed
     bsr hide_sprites
     bsr.b   stop_background_loop
+    bsr     stop_sounds
     subq.w  #1,maze_blink_timer
     bne.b   .no_change
     move.w  #MAZE_BLINK_TIME,maze_blink_timer
@@ -2627,8 +2679,6 @@ update_all
     ; for demo mode
     addq.w  #1,record_input_clock
 
-    bsr update_sound_loops
-
     move.w   first_ready_timer(pc),d0
     cmp.w   ready_timer(pc),d0
     bne.b   .no_first_tick
@@ -2648,7 +2698,7 @@ update_all
     rts
 .ready_off
 
-    bsr update_power_dot_flashing
+    bsr update_power_pill_flashing
     move.w  ghost_eaten_timer(pc),d6
     bmi.b   .update_pac_and_ghosts
     subq.w  #1,d6    
@@ -2672,11 +2722,11 @@ remove_bonus_score
     move.w  #MSG_HIDE,bonus_score_display_message      ; tell draw routine to clear
     clr.w   bonus_score_timer
     rts
-update_power_dot_flashing
+update_power_pill_flashing
     ; power dot blink timer
-    subq.w  #1,power_dot_timer
+    subq.w  #1,power_pill_timer
     bpl.b   .no_reload
-    move.w  #BLINK_RATE,power_dot_timer
+    move.w  #BLINK_RATE,power_pill_timer
 .no_reload
     rts
     
@@ -2794,7 +2844,7 @@ update_intro_screen
     cmp.w   #DEMO_PACMAN_TIMER,state_timer
     bcs.b   .no_pac_demo_anim
     
-    bsr update_power_dot_flashing
+    bsr update_power_pill_flashing
     move.w  ghost_eaten_timer(pc),d6
     bmi.b   .update_pac_and_ghosts
     subq.w  #1,d6
@@ -2864,7 +2914,7 @@ update_intro_screen
     lea ghosts(pc),a3
     cmp.w   #1,h_speed(a3)
     beq.b   .storex ; powerpill taken already
-    cmp.w   #X_DEMO_POWER_DOT+8,d2
+    cmp.w   #X_DEMO_power_pill+8,d2
     bne.b   .storex
     ; eat dot, don't turn around immediately
     move.w  #3,.skip_3_frames
@@ -2873,7 +2923,7 @@ update_intro_screen
     beq.b   .noclr
     move.l  (a0),a1
     clr.l   (a0)
-    bsr clear_power_dot
+    bsr clear_power_pill
 .noclr
     
     lea ghosts(pc),a3
@@ -2920,7 +2970,7 @@ update_intro_screen
     add.w   #Ghost_SIZEOF,a3
     dbf d7,.cloop
 .storex
-    cmp.w   #X_DEMO_POWER_DOT+4,d2
+    cmp.w   #X_DEMO_power_pill+4,d2
     bcc.b  .storex2
     ; turn around now
     move.w  #1,h_speed(a4)
@@ -3109,8 +3159,8 @@ update_ghosts:
     cmp.w   #MODE_EYES,mode(a4)
     beq.b   .eyes
     move.w  mode_timer(a4),d0
-    subq.w  #1,d0
     beq.b   .new_mode
+    subq.w  #1,d0
     move.w  d0,mode_timer(a4)
 .mode_done
     move.l  a4,a0
@@ -3842,6 +3892,8 @@ power_pill_taken
     rts
     
 update_pac
+    clr.w   player_speed
+    
     move.w  player_killed_timer(pc),d6
     bmi.b   .alive
     moveq.w #0,d0
@@ -4042,7 +4094,7 @@ update_pac
     beq.b   .zap_clear
     cmp.l  d1,a1
     bne.b   .clrpdloop
-    bsr clear_power_dot
+    bsr clear_power_pill
     clr.l   (-4,a0)
     bra.b   .score  ; found
 .zap_clear
@@ -5039,7 +5091,7 @@ level_blink_timer
     dc.w    0
 current_state
     dc.w    0
-power_dot_timer:
+power_pill_timer:
     dc.w    BLINK_RATE
 score
     dc.l    0
@@ -5051,10 +5103,12 @@ maze_color
     dc.w    0
 maze_blink_timer
     dc.w    0
-bonus_level_table:
-    dc.w    0,1,2,2,3,3,4,4,5,5,6,6,7
+    ; table up to level 21. After that it's the same
+bonus_level_table:  ; 1 is not present, no score 200 in bonuses
+    dc.w    0,2,3,3,4,4,5,5,6,6,7,7,8,8,8,8,8,8,8,8,8
 bonus_level_score:  ; *10
-    dc.w    10,30,50,50,70,70,100,100,200,200,300,300,500
+    dc.w    10,30,50,50,70,70,100,100,200,200,300,300
+    dc.w    500,500,500,500,500,500,500,500,500
 bonus_timer:
     dc.w    0
 ; general purpose timer for non-game states (intro, game over...)
@@ -5281,6 +5335,8 @@ high_score_string
     dc.b    " HIGH SCORE",0
 p1_string
     dc.b    "     1UP",0
+level_string
+    dc.b    "   LEVEL",0
 score_string
     dc.b    "       00",0
 game_over_string
@@ -6016,15 +6072,17 @@ namco:
     
 bonus_pics:
     incbin  "cherry.bin"        ; 0
-    incbin  "strawberry.bin"    ; 1
-    incbin  "peach.bin"         ; 2
-    incbin  "apple.bin"         ; 3
-    incbin  "grapes.bin"        ; 4
-    incbin  "galaxian.bin"      ; 5
-    incbin  "bell.bin"          ; 6
-    incbin  "key.bin"           ; 7
+    incbin  "cherry.bin"        ; 1  (gap for nonexistent 200 score)
+    incbin  "strawberry.bin"    ; 2
+    incbin  "peach.bin"         ; 3
+    incbin  "apple.bin"         ; 4
+    incbin  "grapes.bin"        ; 5
+    incbin  "galaxian.bin"      ; 6
+    incbin  "bell.bin"          ; 7
+    incbin  "key.bin"           ; 8
 bonus_scores:
     incbin  "bonus_scores_0.bin"    ; 100
+    incbin  "bonus_score_200.bin"   ; 200 (for 2000)
     incbin  "bonus_scores_1.bin"    ; 300
     incbin  "bonus_scores_2.bin"    ; 500
     incbin  "bonus_scores_3.bin"    ; 700
