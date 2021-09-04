@@ -1,19 +1,19 @@
 bugs:
 
-- inky trapped in pen in the end of level (sometimes????)
-- 0-time power pill: ghosts don't change direction
-- fright timer seems off for some higher levels (too long)
+- inky trapped in pen in the end of level (lose life, capture ghosts)
+- 0-time power pill: ghosts locked ? don't change direction
+- check fright timer for higher levels
 - pacman traverses ghosts sometimes
 
 minor issues:
 
+- some loops not correct (bad loop timing now that we went 50hz)
 - reset "frightened" palette to blue (for intro)
 - pt player sample play issues: yes but covered by sound loop!!
 - demo mode (record input not replaying properly!!)
 - after game over: intro text shifted (draw timer vs update timer bug!!!)
 - pac leaving a few pixels behind
-- when end of level flashes, galaxian flashes too. Maybe instead of palette change
-  just draw the maze on another plane to activate white
+
 
 reported, not reproduced:
 
@@ -23,6 +23,9 @@ reported, not reproduced:
 
 todo:
 
+- sequence to enable cheat keys
+- highscore save
+- quit with F10 instead of LMB
 - intermission sequences:
   * 3"20 (after level 2): ghost chases pacman, big pacman chases back => DONE
   * 7"50 (after level 5): ghost chases pacman, tears his drape on a nail

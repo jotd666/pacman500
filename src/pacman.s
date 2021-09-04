@@ -573,6 +573,19 @@ clear_screen
     add.l   #SCREEN_PLANE_SIZE,a1
     dbf d0,.cp
     rts
+
+; < A1: plane start    
+clear_maze_plane
+    move.l #NB_LINES-1,d0
+.cp
+    move.w  #NB_BYTES_PER_MAZE_LINE/4-1,d1
+    move.l  a1,a0
+.cl
+    clr.l   (a0)+
+    dbf d1,.cl
+    add.l   #NB_BYTES_PER_LINE,a1
+    dbf d0,.cp
+    rts
     
 init_new_play:
     ; global init at game start
@@ -2190,18 +2203,11 @@ draw_bonus:
     movem.l (a7)+,d0-d3/a0-a1
     rts
     
-draw_maze:
-    lea game_palette(pc),a0
-    move.w  (2,a0),d0
-    move.w  d0,maze_color     ; save original maze color
-    ; re-set it right now just in case
-    move.w  d0,_custom+color+2  
-    
-    move.w  #MAZE_BLINK_TIME,maze_blink_timer
-    move.b  #8,maze_blink_nb_times
+draw_maze:    
+    lea screen_data,a1
+draw_maze_plane:
     ; copy maze data in bitplanes
     lea maze_data(pc),a0
-    lea screen_data,a1
     move.w  #NB_LINES-1,d0
 .copyline
     move.w  #6,d1
@@ -2487,7 +2493,7 @@ level2_interrupt:
     bne.b   .no_playing
     cmp.b   #$50,d0
     bne.b   .no_lskip
-    move.w  #STATE_LEVEL_COMPLETED,current_state
+    bsr     level_completed
 .no_lskip
     cmp.b   #$51,d0
     bne.b   .no_invincible
@@ -2648,14 +2654,17 @@ update_all
     move.w  #MAZE_BLINK_TIME,maze_blink_timer
     subq.b  #1,maze_blink_nb_times
     beq.b   .next_level
+    lea     screen_data,a2
+    lea     screen_data+3*SCREEN_PLANE_SIZE,a1
     eor.b   #1,.color_blue
-    beq.b   .orig
-    move.w  maze_color(pc),d0
-    bra.b   .chcol
+    beq.b   .chcol
 .orig
-    move.w  #$FFF,d0
+    exg a1,a2
 .chcol
-    move.w  d0,_custom+color+2
+    ;move.w  d0,_custom+color+2
+    bsr     clear_maze_plane
+    move.l  a2,a1
+    bsr     draw_maze_plane
 .no_change
     rts
 .color_blue
@@ -3868,14 +3877,16 @@ power_pill_taken
     move.w  #NB_FLASH_FRAMES-1,flash_toggle_timer(a0)
     move.w  level_number(pc),d1
     cmp.w   #18,d1
-    bcc.b   .no_time
+    bcc.b   .no_time_but_reverse
     add.w   d1,d1
     add.w   d1,d1
     lea     fright_table(pc),a1
+    add.w   d1,a1       ; select the level
     move.w  (a1)+,d2
     move.w  d2,mode_timer(a0)
     move.w  (a1)+,flash_timer(a0)
     clr.b   flashing_as_white(a0)
+.no_time_but_reverse    
     move.b  #1,reverse_flag(a0)
     bra.b   .next
 .no_time
@@ -4170,7 +4181,7 @@ update_pac
     cmp.b   #TOTAL_NUMBER_OF_DOTS,d4
     bne.b   .other
     ; no more dots: win
-    move.w  #STATE_LEVEL_COMPLETED,current_state
+    bsr level_completed
 .other
    
     lea score_table(pc),a0
@@ -4406,6 +4417,12 @@ animate_pacman
 .no_floop
     rts
 
+level_completed:
+    move.w  #MAZE_BLINK_TIME,maze_blink_timer
+    move.b  #8,maze_blink_nb_times    
+    move.w  #STATE_LEVEL_COMPLETED,current_state
+    rts
+    
 draw_pacman:
     lea     player(pc),a2
     tst.w  ghost_eaten_timer
@@ -5107,8 +5124,6 @@ displayed_score
     dc.l    0
 high_score
     dc.l    0
-maze_color
-    dc.w    0
 maze_blink_timer
     dc.w    0
     ; table up to level 21. After that it's the same
