@@ -1,10 +1,9 @@
 bugs:
 
-- pacman super speed sometimes: grape level even without 50/60 hack
-  => LOGPC and check when it happens
-- inky trapped in pen in the end of level
-- pacman traverses ghosts sometimes
+- inky trapped in pen in the end of level (sometimes????)
 - 0-time power pill: ghosts don't change direction
+- fright timer seems off for some higher levels (too long)
+- pacman traverses ghosts sometimes
 
 minor issues:
 

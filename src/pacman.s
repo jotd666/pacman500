@@ -3892,7 +3892,6 @@ power_pill_taken
     rts
     
 update_pac
-    clr.w   player_speed
     
     move.w  player_killed_timer(pc),d6
     bmi.b   .alive
@@ -3946,11 +3945,6 @@ update_pac
     rts
     
 .okmove
-    bsr .compute_player_speed
-
-    ; store current speed
-    move.w  d0,player_speed
-
     ; pre turn timer
     tst.w  prepost_turn(a4)
     beq.b   .ptzero
@@ -4011,25 +4005,21 @@ update_pac
     beq.b   .out        ; nothing is currently pressed: optimize
     btst    #JPB_BTN_RIGHT,d0
     beq.b   .no_right
-    move.w  player_speed(pc),h_speed(a4)
+    move.w  #1,h_speed(a4)
     bra.b   .vertical
 .no_right
     btst    #JPB_BTN_LEFT,d0
     beq.b   .vertical
-    move.w  player_speed(pc),d1
-    neg.w   d1
-    move.w  d1,h_speed(a4)  
+    move.w  #-1,h_speed(a4)  
 .vertical
     btst    #JPB_BTN_UP,d0
     beq.b   .no_up
-    move.w  player_speed(pc),d1
-    neg.w   d1
-    move.w  d1,v_speed(a4)
+    move.w  #-1,v_speed(a4)
     bra.b   .out
 .no_up
     btst    #JPB_BTN_DOWN,d0
     beq.b   .no_down
-    move.w  player_speed(pc),v_speed(a4)
+    move.w  #1,v_speed(a4)
 .no_down    
 .out
     ; cache xy in regs / save them
@@ -4252,6 +4242,13 @@ update_pac
 .ddv
     
     add.w   d4,d3
+    ; check if speed is double
+    bsr .compute_player_speed
+    tst d0
+    beq.b   .vsingle
+    ; double speed
+    add.w   d4,d3    
+.vsingle
     move.w  d5,xpos(a4)
     move.w  d3,ypos(a4)
 
@@ -4304,6 +4301,13 @@ update_pac
 .dd
     ; handle tunnel
     add.w   d4,d2
+    bsr .compute_player_speed
+    tst d0
+    beq.b   .hsingle
+    ; double speed
+    add.w   d4,d2    
+.hsingle
+    
     cmp.w   #X_MIN+1,d2
     bcc.b   .positive
     ; warp to right
@@ -4321,6 +4325,10 @@ update_pac
 
 .no_hmove
     rts
+
+; < A4: player structure
+; > D0: 1 if double speed, 0 otherwise
+; trashes: A1,D1
 
 .compute_player_speed
     move.w  speed_table_index(a4),d1
@@ -4340,6 +4348,7 @@ update_pac
     move.b  (a1,d1.w),d0    ; speed
     beq.b   .skip_move      ; if zero skip move
     ext.w   d0
+    subq.w  #1,d0       ; hack so 1 => 0 and 2 => 1
     rts
     
 .dot_eaten
@@ -4560,8 +4569,7 @@ store_sprite_pos
     movem.l  (a7)+,d1/a0/a1
     rts
 
-player_speed
-    dc.w    1
+
 direction_speed_table
     ; right
     dc.w    1,0
