@@ -48,6 +48,35 @@
    "start_x":0,
    "start_y":64
   },
+     {
+  "name":"red_ghost_with_leg",
+  "sprite_palette":[[0,0,0],[240,0,0],[240, 176, 176], [224, 208, 240]],
+  "sprite_number":0,
+   "frames":2,
+   "start_x":128,
+   "start_y":112
+  },
+    {
+  "name":"red_ghost_repaired",
+  "sprite_number":0,
+   "frames":2,
+   "start_x":160,
+   "start_y":112
+  },
+     {
+  "name":"red_ghost_naked",
+   "frames":2,
+   "start_x":128,
+   "start_y":128,
+   "width":32
+  },
+    {
+  "name":"red_ghost_drape",
+  "sprite_number":0,
+   "frames":5,
+   "start_x":128,
+   "start_y":96
+  },
   {
    "name":"frightened_ghost_blue",
    "sprite_palette":[[0,0,0],[32,32,240],[240,176,176],[240,0,0]],
@@ -72,6 +101,8 @@
    "start_x":128,
    "start_y":80
   },
+
+  
 {
    "name":"red_ghost_bob",
    "frames":1,
@@ -115,7 +146,6 @@
    "start_x":84,
    "start_y":144
  },
-
 
  {
    "name":"bonus",

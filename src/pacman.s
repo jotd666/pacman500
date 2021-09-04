@@ -83,6 +83,10 @@ INTERRUPTS_ON_MASK = $E038
     UWORD    flash_timer
     UWORD    flash_toggle_timer
     UWORD    pen_timer
+    UWORD    pen_xtile
+    UWORD    pen_ytile
+	UWORD	 xpen
+	UWORD	 ypen
     UBYTE    pen_nb_dots
     UBYTE    pen_dot_limit  ; 0, 7, 17, 32 depending on which ghost
     UBYTE    reverse_flag   ; direction change flag
@@ -334,9 +338,15 @@ Start:
     move.w #0,bpl1mod(a5)                ; modulo de tous les plans = 40
     move.w #0,bpl2mod(a5)
 
-
-    
 intro:
+    ; small random to change ghosts names from time to time (1 out of 5 after a game over)
+    lea character_text_table_en(pc),a0
+    cmp.w    #1,vbl_counter
+    bne.b   .en
+    lea character_text_table_jp(pc),a0
+.en
+    move.l  a0,character_text_table
+    
     bsr stop_background_loop
     
     bsr hide_sprites
@@ -359,8 +369,8 @@ intro:
 .intro_loop    
     cmp.w   #STATE_INTRO_SCREEN,current_state
     bne.b   .out_intro
-    btst    #6,$BFE001
-    beq.b   .restart
+    tst.b   quit_flag
+    bne.b   .out
     move.l  joystick_state(pc),d0
     btst    #JPB_BTN_RED,d0
     beq.b   .intro_loop
@@ -381,8 +391,8 @@ intro:
 
 .game_start_loop
     move.l  joystick_state(pc),d0
-    btst    #6,$BFE001
-    beq.b   .restart
+    tst.b   quit_flag
+    bne.b   .out
     btst    #JPB_BTN_RED,d0
     beq.b   .game_start_loop
 
@@ -422,8 +432,8 @@ intro:
 .intermission_loop
     cmp.w   #STATE_INTERMISSION_SCREEN,current_state
     bne.b   .out_intermission
-    btst    #6,$BFE001
-    beq.b   .out_intermission
+    tst.b   quit_flag
+    bne.b   .out
     move.w  joystick_state(pc),d0
     btst    #JPB_BTN_RED,d0
     bne.b   .out_intermission
@@ -464,8 +474,8 @@ intro:
     move.w  #STATE_PLAYING,current_state
     move.w #INTERRUPTS_ON_MASK,intena(a5)
 .mainloop
-    btst    #6,$bfe001
-    beq.b   .out
+    tst.b   quit_flag
+    bne.b   .out
     DEF_STATE_CASE_TABLE
     
 .game_start_screen
@@ -501,7 +511,7 @@ intro:
     ; note down that the ghost release system changes now
     ; that a life was lost
     st.b    a_life_was_lost
-    ; global dot counter for ghosts to exit pen
+    ; global dot counter for ghosts to exit pen is reset
     clr.b   ghost_release_dot_counter
     
     sub.b   #1,nb_lives
@@ -749,6 +759,8 @@ set_normal_ghost_palette
 
 ; < D0: 0 if start of a level, 1 if a life has been lost
 
+PEN_XY_PINKY = (RED_XSTART_POS>>3)<<16+(OTHERS_YSTART_POS>>3)
+
 init_ghosts
     move.b  d0,d4
     lea ghosts(pc),a0
@@ -762,8 +774,7 @@ init_ghosts
     ; init ghost dot count table, start with pinky
     ; pinky exits right away unless a life is lost
     move.l  #ghosts+1*Ghost_SIZEOF,ghost_which_counts_dots
-    ; init pen tile
-    move.l  #(RED_XSTART_POS>>3)<<16+(OTHERS_YSTART_POS>>3),pen_tile_xy
+
     
 .igloop
     ; copy all 4 colors (back them up)
@@ -793,6 +804,10 @@ init_ghosts
     clr.w   target_ytile(a0)
     clr.w   home_corner_xtile(a0)
     clr.w   home_corner_ytile(a0)
+    
+    move.l  #PEN_XY_PINKY,pen_xtile(a0)     ; default pen position: pinky
+    move.w  #RED_XSTART_POS,xpen(a0)
+    move.w  #OTHERS_YSTART_POS,ypen(a0)
     
     bsr     update_ghost_mode_timer
     move.w  #MODE_SCATTER,mode(a0)
@@ -868,7 +883,9 @@ init_ghosts
 	move.w  #(RED_XSTART_POS-16),xpos(a0)
     move.w  #UP,direction(a0)
     move.w  #0,frame(a0)
-    move.b  #17,pen_dot_limit(a0)    
+    move.b  #17,pen_dot_limit(a0)
+    subq.w  #1,pen_xtile(a0)
+    move.w  xpos(a0),xpen(a0)
     move.l  #cyan_ghost_frame_table,frame_table(a0)
     move.l  #cyan_frightened_ghost_white_frame_table,frightened_ghost_white_frame_table(a0)
     move.l  #cyan_frightened_ghost_blue_frame_table,frightened_ghost_blue_frame_table(a0)
@@ -884,7 +901,9 @@ init_ghosts
     move.l  #'CLYD',character_id(a0)
 
     move.b  #32,pen_dot_limit(a0)    
+    addq.w  #1,pen_xtile(a0)
 	move.w  #(RED_XSTART_POS+16),xpos(a0)
+    move.w  xpos(a0),xpen(a0)
     move.w  #UP,direction(a0)
     move.w  #0,frame(a0)
     move.l  #orange_ghost_frame_table,frame_table(a0)
@@ -1009,7 +1028,7 @@ update_ghost_target
     move.l  home_corner_xtile(a0),target_xtile(a0)  ; hack copy x & y at once
     rts
 .run_home:
-    move.l  pen_tile_xy,target_xtile(a0)  ; hack copy x & y at once
+    move.l  pen_xtile(a0),target_xtile(a0)  ; hack copy x & y at once
     rts
 .chase:
     lea player(pc),a1
@@ -1761,10 +1780,10 @@ X_DOT = 120
 Y_DOT = 160
 
 Y_PAC_ANIM = 136
-X_DEMO_power_pill = 48
+X_DEMO_POWER_PILL = 48
 DEMO_PACMAN_TIMER = NB_TICKS_PER_SEC*14
 DEMO_DOT_SCORE_TIMER = NB_TICKS_PER_SEC*12
-DEMO_power_pill_TIMER = NB_TICKS_PER_SEC*13
+DEMO_POWER_PILL_TIMER = NB_TICKS_PER_SEC*13
 
 DRAW_GHOST_INFO:MACRO
     cmp.w   #NB_TICKS_PER_SEC*(\2*3+1),state_timer
@@ -1876,9 +1895,9 @@ draw_intro_screen
     bsr write_color_string
 .no_dot_score
 
-    cmp.w   #DEMO_power_pill_TIMER,state_timer
+    cmp.w   #DEMO_POWER_PILL_TIMER,state_timer
     bne.b   .no_power_pill
-    lea	screen_data+DOT_PLANE_OFFSET+X_DEMO_power_pill/8+Y_PAC_ANIM*NB_BYTES_PER_LINE,a1
+    lea	screen_data+DOT_PLANE_OFFSET+X_DEMO_POWER_PILL/8+Y_PAC_ANIM*NB_BYTES_PER_LINE,a1
     lea  powerdots(pc),a0
     move.l  a1,(a0)+
     bsr draw_power_pill
@@ -1927,7 +1946,7 @@ draw_intro_screen
     bra blit_4_planes
     
 .draw_ghost_text
-    lea character_text_table_en(pc),a0
+    move.l character_text_table(pc),a0
     move.w  d0,d3
     move.w  d0,d4
     lsl.w   #4,d3
@@ -2487,6 +2506,8 @@ level2_interrupt:
     bne.b   .no_esc
     cmp.w   #STATE_INTRO_SCREEN,current_state
     beq.b   .no_esc
+    cmp.w   #STATE_GAME_START_SCREEN,current_state
+    beq.b   .no_esc
     move.w  #STATE_GAME_OVER,current_state
 .no_esc
     cmp.w   #STATE_PLAYING,current_state
@@ -2546,6 +2567,12 @@ level2_interrupt:
 .no_bonus
 
 .no_playing
+
+    cmp.b   #$59,d0     ; F5
+    bne.b   .no_quit
+    st.b    quit_flag
+.no_quit
+
 	BSET	#$06,$1E01(A5)
 	move.l	#2,d0
 	bsr	beamdelay
@@ -2614,10 +2641,7 @@ level3_interrupt:
 
 vbl_counter:
     dc.w    0
-mouse:	
-	BTST #6,$BFE001
-	BNE  mouse
-	rts
+
 
 ; what: updates game state
 ; args: none
@@ -2923,7 +2947,7 @@ update_intro_screen
     lea ghosts(pc),a3
     cmp.w   #1,h_speed(a3)
     beq.b   .storex ; powerpill taken already
-    cmp.w   #X_DEMO_power_pill+8,d2
+    cmp.w   #X_DEMO_POWER_PILL+8,d2
     bne.b   .storex
     ; eat dot, don't turn around immediately
     move.w  #3,.skip_3_frames
@@ -2979,7 +3003,7 @@ update_intro_screen
     add.w   #Ghost_SIZEOF,a3
     dbf d7,.cloop
 .storex
-    cmp.w   #X_DEMO_power_pill+4,d2
+    cmp.w   #X_DEMO_POWER_PILL+4,d2
     bcc.b  .storex2
     ; turn around now
     move.w  #1,h_speed(a4)
@@ -3335,7 +3359,7 @@ update_ghosts:
     tst.b   a_life_was_lost
     beq.b   .no_life_lost
     ; increase timer
-
+    
     move.w  ghost_release_override_timer(pc),d0
     cmp.w   ghost_release_override_max_time(pc),d0
     beq.b   .max_time_reached
@@ -3354,13 +3378,13 @@ update_ghosts:
     cmp.l   #ghosts+4*Ghost_SIZEOF,a4
     bne.b   .no_last_ghost
     ; all ghosts are out: clear flag, elroy resumes as normal
-    clr.b   a_life_was_lost
+    clr.b   elroy_mode_lock
 .no_last_ghost
     
 .no_life_lost
     rts
 
-; < A4: ghost struture    
+; < A4: ghost structure    
 .can_exit_pen
     cmp.l   #ghosts,a4
     beq.b   .exit_pen_ok        ; blinky cannot be trapped in the pen
@@ -3381,14 +3405,30 @@ update_ghosts:
 
     cmp.w   #MODE_EYES,mode(a4)
     bne.b   .no_eyes
-    ; has reached target?
-    cmp.w   pen_tile_xy(pc),d4
-    bne.b   .nothing
-    cmp.w   pen_tile_xy+2(pc),d5
-    bne.b   .nothing
+    ; has reached target? (depends on ghost type)
+    cmp.w   pen_xtile(a4),d4
+    bne.b   .no_reverse
+    cmp.w   pen_ytile(a4),d5
+    bne.b   .no_reverse
+    ; more accurate x test would be required to avoid jumpy eye to ghost
+    ; but what the heck! it's not as easy as it should be :)
+    ; align fully
+    move.l  xpen(a4),xpos(a4)   ; x and y
+    move.w  #UP,direction(a4)   ; force direction where ghost can move
+    move.w  #-1,v_speed(a4)   ; force speed where ghost can move
+    clr.w   h_speed(a4)
     ; reached target tile: respawn
     move.l  previous_mode_timer(a4),mode_timer(a4)  ; hack also restores mode
-    clr.b   pen_exit_override_flag(a4)              ; else would exit immediately
+    clr.b   pen_exit_override_flag(a4)              ; else would exit immediately    
+    ; now set "ghost_which_counts_dots" to that ghost unless variable points to
+    ; some more prioritary ghost (ex: if clyde enters pen, but inky is already the next
+    ; ghost in the sequence, don't do anything)
+    move.l  ghost_which_counts_dots(pc),a0
+    cmp.l   a0,a4
+    bcc.b   .not_before     ; current has lower priority: do nothing
+    move.l  a4,ghost_which_counts_dots      ; used to check timeout counter too
+.not_before
+    
     move.l  a4,a0
     bsr     set_normal_ghost_palette
     ; check if other ghosts are in "eyes" mode
@@ -3398,7 +3438,7 @@ update_ghosts:
     ; no more eyes
     bsr resume_sound_loop
 .nothing
-    bra.b   .no_reverse
+    bra.b   .next_ghost
 .no_eyes
     ; now the tricky bit: decide where to go
     ; first check for "reverse flag" signal
@@ -3445,11 +3485,7 @@ update_ghosts:
     lea no_direction_choice_table(pc),a0
     move.b   (a0,d3.w),d4
     bpl.b   .one_direction_only
-;    cmp.w   #MODE_CHASE,mode(a4)
-;    bne .noch
-;    blitz
-;    nop
-;.noch
+
     ; ghost can chose several paths/routes
     ; try to select the best direction to reach the target
     move.w  d3,d0       ; get possible directions back
@@ -3515,7 +3551,8 @@ update_ghosts:
     bra.b   .tile_change_done
     
 ; 2 times the clockwise cycle so we can pick
-; a clockwise sequence randomly by picking a 0-3 random number
+; a clockwise sequence randomly by starting by
+; a 0-3 random number
 .direction_clockwise_table
     REPT    2
     dc.b    DIRB_RIGHT,RIGHT
@@ -3523,9 +3560,7 @@ update_ghosts:
     dc.b    DIRB_LEFT,LEFT
     dc.b    DIRB_UP,UP
     ENDR
-   
-.is_in_pen
-    dc.b    0
+
 
         even
     
@@ -4119,11 +4154,13 @@ update_pac
     move.l  ghost_which_counts_dots(pc),a3  ; also the next ghost to leave pen
 .retry
     cmp.l   #ghosts+4*Ghost_SIZEOF,a3
-    beq.b   .no_need_to_count_dots
+    bcc.b   .no_need_to_count_dots
     tst.b   a_life_was_lost
     beq.b   .normal_dot_ghost_count
     ; when a life was lost (until counter resets), an alternate way is enabled
     ; to control when ghosts can exit from pen
+    ; (note that we don't actually check if the ghosts are in the pen, we don't care
+    ; except for clyde)
     move.b  pen_dot_limit(a3),d0
     cmp.b   ghost_release_dot_counter(pc),d0        ; exact number (7,17,32)
     bne.b   .no_need_to_count_dots
@@ -4136,6 +4173,13 @@ update_pac
     ; if this was the last ghost (clyde), then cancel global flag
     ; allowing elroy mode to resume if was locked
     cmp.l   #orange_ghost+Ghost_SIZEOF,a3
+    bne.b   .no_need_to_count_dots
+    clr.b   elroy_mode_lock
+    ; clears the flag that forces use of global counter
+    ; only if clyde is actually in the pen
+    move.l  a3,a0
+    bsr collides_with_maze
+    cmp.b   #P,d0
     bne.b   .no_need_to_count_dots
     clr.b   a_life_was_lost
     bra.b   .no_need_to_count_dots
@@ -4671,7 +4715,7 @@ pacman_collides_with_maze
 ; trashes: a0,a1,d1
 
 collides_with_maze:
-    lea wall_table,a0
+    lea wall_table(pc),a0
     ; apply x,y offset
     lsr.w   #3,d1       ; 8 divide
     lsl.w   #5,d1       ; times 32
@@ -5158,8 +5202,6 @@ player_killed_timer:
     dc.w    -1
 ghost_eaten_timer:
     dc.w    -1
-pen_tile_xy:
-    dc.l    0
 bonus_score_timer:
     dc.w    0
 fright_timer:
@@ -5173,6 +5215,8 @@ ghost_release_override_timer:
 maze_blink_nb_times
     dc.b    0
 nb_lives:
+    dc.b    0
+quit_flag
     dc.b    0
 elroy_mode_lock:
     dc.b    0
@@ -5373,6 +5417,9 @@ fifty_pts_string:
     dc.b    "50 pts",0
 ten_pts_string:
     dc.b    "10 pts",0
+    even
+character_text_table
+    dc.l    0
 character_text_table_jp
     dc.l    oiake,akabei,$F00,0
     dc.l    machibuse,pinky,$0fbf,0
@@ -6223,6 +6270,32 @@ DECL_GHOST:MACRO
     DECL_GHOST  pink
     DECL_GHOST  cyan
     DECL_GHOST  orange
+
+; special sprites for intermissions #2 and #3
+
+red_ghost_drape_table:
+        dc.l    red_ghost_drape_1,red_ghost_drape_2,red_ghost_drape_3
+
+nail:
+    dc.l    0
+    incbin  "red_ghost_drape_0.bin"
+    dc.l    0
+torn_drape:
+    dc.l    0
+    incbin  "red_ghost_drape_4.bin"
+    dc.l    0
+red_ghost_drape_1:
+    dc.l    0
+    incbin  "red_ghost_drape_1.bin"
+    dc.l    0
+red_ghost_drape_2:
+    dc.l    0
+    incbin  "red_ghost_drape_2.bin"
+    dc.l    0
+red_ghost_drape_3:
+    dc.l    0
+    incbin  "red_ghost_drape_3.bin"
+    dc.l    0
     
 score_200:
     dc.l    0
