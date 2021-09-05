@@ -38,6 +38,7 @@ MINOR ISSUES:
 
 TO DO:
 
+- startup: pacman appears at mid-music
 - sequence to enable cheat keys
 - highscore save
 - cheat keys to kill ghosts

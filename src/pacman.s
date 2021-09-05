@@ -116,6 +116,11 @@ SECOND_INTERMISSION_LEVEL = 5
 THIRD_INTERMISSION_LEVEL = 9
 FOURTH_INTERMISSION_LEVEL = 13
 
+; ---------------debug/adjustable variables
+
+; uncomment to test intermission screen
+;INTERMISSION_TEST = THIRD_INTERMISSION_LEVEL
+
 ; temp if nonzero, then records game input, intro music doesn't play
 ; and when one life is lost, blitzes and a0 points to move record table
 RECORD_INPUT_TABLE_SIZE = 0; $2000
@@ -123,6 +128,8 @@ RECORD_INPUT_TABLE_SIZE = 0; $2000
 EXTRA_LIFE_SCORE = 10000/10
 
 START_LEVEL = 1
+
+; --------------- end debug/adjustable variables
 
 ; actual nb ticks (PAL)
 NB_TICKS_PER_SEC = 50
@@ -280,8 +287,10 @@ Start:
 ;    jsr (_LVOWaitTOF,a6)
 
     move.w  #STATE_INTRO_SCREEN,current_state
-    ;;move.w  #STATE_GAME_START_SCREEN,current_state
+    
+    
     IFEQ    RECORD_INPUT_TABLE_SIZE
+    ; uncomment to test demo mode right now
     ;;st.b    demo_mode
     ENDC
     
@@ -406,6 +415,10 @@ intro:
     
     bsr init_new_play
 
+    IFD INTERMISSION_TEST
+    move.w  #INTERMISSION_TEST,level_number
+    ENDC
+
 .new_level  
     bsr clear_screen
     bsr draw_score    
@@ -417,8 +430,14 @@ intro:
     ; on some levels, there's an intermission sequence
 
     cmp.w  #FIRST_INTERMISSION_LEVEL,level_number
+    beq.b   .intermission
+    cmp.w  #SECOND_INTERMISSION_LEVEL,level_number
+    beq.b   .intermission
+    cmp.w  #THIRD_INTERMISSION_LEVEL,level_number
+    beq.b   .intermission
+    cmp.w  #FOURTH_INTERMISSION_LEVEL,level_number
     bne.b   .no_intermission
-
+.intermission
     
     bsr wait_bof
 
@@ -725,7 +744,7 @@ hide_sprites:
     
 hide_ghost_sprites:
     move.w  #3,d1
-    lea  sprites+8,a0
+    lea  sprites,a0
     lea empty_sprite,a1
 .emptyspr
 
@@ -1377,8 +1396,7 @@ draw_ghosts:
     cmp.w   #PLAYER_KILL_TIMER-NB_TICKS_PER_SEC,d6
     bcc.b   .normal
     ; clear the ghosts sprites after 1 second when pacman is killed
-    bsr.b hide_sprites
-    rts
+    bra.b hide_sprites
 .normal
     lea ghosts(pc),a0
     moveq.l #3,d7
@@ -1541,9 +1559,9 @@ draw_ghosts:
     move.l  d0,(a1)
     move.l  a1,d2
     move.l  copperlist_address(a0),a1
-    move.w  d2,(6-8,a1)
+    move.w  d2,(6+8,a1)
     swap    d2
-    move.w  d2,(2-8,a1)    
+    move.w  d2,(2+8,a1)    
     bra.b   .next_ghost
 
 .eyes
@@ -1564,6 +1582,8 @@ draw_all
 .intermission_screen
     cmp.w   #FIRST_INTERMISSION_LEVEL,level_number
     beq.b   draw_intermission_screen_level_2
+    cmp.w   #SECOND_INTERMISSION_LEVEL,level_number
+    beq.b   draw_intermission_screen_level_5
     rts
     
 .game_start_screen
@@ -1967,22 +1987,7 @@ draw_intro_screen
     add.w   d4,d1
 
     bra write_color_string
-    
-draw_intermission_screen_level_2
-    tst.w   state_timer
-    beq.b   .outd
-    
-    ; blit pacman
-    bsr draw_ghosts
-    lea player(pc),a2
-    cmp.w   #LEFT,direction(a2)
-    beq.b   .small
-    bsr draw_big_pacman
-    bra.b   .outd
-.small
-    bsr draw_pacman
-.outd    
-    rts
+
 
 
     
@@ -2659,6 +2664,8 @@ update_all
 .intermission_screen
     cmp.w   #FIRST_INTERMISSION_LEVEL,level_number
     beq.b   update_intermission_screen_level_2
+    cmp.w   #SECOND_INTERMISSION_LEVEL,level_number
+    beq.b   update_intermission_screen_level_5
     ; other levels
     rts
     
@@ -2805,11 +2812,8 @@ check_pac_ghosts_collisions
     tst.b   invincible_cheat_flag
     bne.b   .nomatch    
     move.w  #PLAYER_KILL_TIMER,player_killed_timer
-    bsr stop_background_loop
-    bra stop_sounds
+    bra stop_background_loop
 
-
-    
     
 .pac_eats_ghost:
 a_ghost_was_eaten:
@@ -3022,6 +3026,201 @@ update_intro_screen
 .move_period
     dc.w    0
     
+    
+
+NAIL_DRAPE_Y_OFFSET = 29
+X_NAIL_HOOKED = X_MAX/2+26
+
+draw_intermission_screen_level_5:
+    tst.w   state_timer
+    beq.b   .outd
+    
+    ; place nail
+    lea  player(pc),a2
+    move.w  #X_MAX/2,d0
+    move.w  ypos(a2),d1
+    sub.w   #NAIL_DRAPE_Y_OFFSET,d1
+    bsr     store_sprite_pos
+    
+    tst.w   show_leg
+    bne.b   .show_torn_drape
+    
+    move.w  nail_timer(pc),d1
+    lsr.w   #3,d1
+    cmp.w   #4,d1
+    bcc.b   .no_drape_update
+    add.w   d1,d1
+    add.w   d1,d1
+    lea red_ghost_drape_table(pc),a1
+    move.l  (a1,d1.w),a0        ; nail/drape frame
+    bra.b   .ssp
+.show_torn_drape
+    lea torn_drape,a0
+.ssp
+    move.l  d0,(a0)
+
+    ; use sprite 1 for nail/drape
+    lea     nail_sprite,a1
+    move.l  a0,d0
+    move.w  d0,(6,a1)
+    swap    d0
+    move.w  d0,(2,a1)
+.no_drape_update
+    
+    ; show_leg
+    
+    tst.w   show_leg
+    bne.b   .show_leg_sprite
+    bsr draw_ghosts
+    bra.b   .cont
+.show_leg_sprite
+    bsr hide_ghost_sprites
+    lea ghosts(pc),a2
+    move.w  xpos(a2),d0
+    move.w  ypos(a2),d1
+    ; center => top left
+    sub.w  #10+X_START,d0
+    sub.w  #8+Y_START,d1
+    ; blit
+    lea red_ghost_with_leg_left,a0
+    cmp.w   #1,show_leg
+    beq.b   .ok
+    lea red_ghost_with_leg_up,a0
+    
+.ok
+    bsr blit_4_planes
+    
+.cont
+    tst.w   xpos(a2)
+    bmi.b   .outd
+    bsr draw_pacman
+.outd    
+    rts
+    
+red_ghost_drape_table:
+        dc.l    nail,red_ghost_drape_1,red_ghost_drape_2,red_ghost_drape_3
+
+update_intermission_screen_level_5
+    tst.w   state_timer
+    bne.b   .no_pac_demo_anim_init
+    
+    lea music_2_sound(pc),a0
+    bsr play_fx
+    
+    clr.w   nail_timer
+    clr.w   show_leg
+    
+    bsr init_player
+    moveq.l #0,d0
+    bsr init_ghosts
+        
+    lea player(pc),a2
+
+    move.w  #X_MAX,xpos(a2)
+    move.w  #Y_PAC_ANIM+28,ypos(a2)
+    lea ghosts(pc),a3
+    moveq   #3,d0
+    moveq.w #0,d1
+.ginit
+    move.w   #400,xpos(a3)
+    move.w  ypos(a2),ypos(a3)
+    move.w  #LEFT,direction(a3)
+    move.w  #0,h_speed(a3)
+    add.l   #Ghost_SIZEOF,a3
+    dbf d0,.ginit
+    
+    ; only red moves / is visible but is far away
+    lea     ghosts(pc),a3
+    move.w  #-1,h_speed(a3)    
+    move.w  #X_MAX+128,xpos(a3)
+    
+    
+.no_pac_demo_anim_init
+    lea music_2_sound(pc),a0
+    move.w  state_timer(pc),d0
+    sub.w   #10,d0      ; add time before replays
+    cmp.w   ss_tick_length(a0),d0
+    bne.b   .no_music_replay
+    bsr play_fx
+    
+.no_music_replay
+
+    add.w   #1,state_timer
+      
+    lea     player(pc),a4
+    lea     ghosts(pc),a3
+
+    bsr animate_pacman
+
+    ; update ghost animations but don't move
+    ; apply speed on ghosts
+    move.w  frame(a3),d2
+    addq.w  #1,d2
+    and.w   #$F,d2
+    move.w  d2,frame(a3)
+
+
+    move.w  (xpos,a4),d2
+    sub.w   #1,d2 ; pac
+    bmi.b   .nopm
+    move.w  d2,(xpos,a4)
+.nopm
+    lea ghosts(pc),a3
+    move.w  (xpos,a3),d2
+    cmp.w   #X_NAIL_HOOKED,d2
+    bcc.b   .full_speed
+
+    move.w  nail_timer(pc),d0
+    addq.w  #1,d0
+    move.w  d0,nail_timer
+    
+    cmp.w   #X_NAIL_HOOKED-10,d2
+    bcs.b   .nogm
+
+    and.w   #7,d0       ; reduces speed
+    bne.b   .nogm
+.full_speed
+    sub.w   #1,d2
+.storex
+    move.w  d2,(xpos,a3)
+.nogm
+    move.w  nail_timer(pc),d0
+    cmp.w   #ORIGINAL_TICKS_PER_SEC*2,d0
+    bne.b   .no_tearing
+    move.w  #1,show_leg
+.no_tearing    
+    cmp.w   #ORIGINAL_TICKS_PER_SEC*3,d0
+    bne.b   .no_tearing2
+    move.w  #2,show_leg
+.no_tearing2
+    cmp.w   #$1B8,d0        ; end of second repeat of music
+    bne.b   .no_end
+    clr.w   state_timer
+    move.w  #STATE_PLAYING,current_state
+.no_end
+    rts
+
+show_leg:
+    dc.w    0
+nail_timer:
+    dc.w    0
+    
+draw_intermission_screen_level_2:
+    tst.w   state_timer
+    beq.b   .outd
+    
+    ; blit pacman
+    bsr draw_ghosts
+    lea player(pc),a2
+    cmp.w   #LEFT,direction(a2)
+    beq.b   .small
+    bsr draw_big_pacman
+    bra.b   .outd
+.small
+    bsr draw_pacman
+.outd    
+    rts
+    
 update_intermission_screen_level_2
     tst.w   state_timer
     bne.b   .no_pac_demo_anim_init
@@ -3055,7 +3254,6 @@ update_intermission_screen_level_2
     
     move.w  #ORIGINAL_TICKS_PER_SEC+ORIGINAL_TICKS_PER_SEC/2,.pac_wait_timer
 
-    
 .no_pac_demo_anim_init
     lea music_2_sound(pc),a0
     move.w  state_timer(pc),d0
@@ -6048,30 +6246,31 @@ tunnel_color_reg = color+38
 colors:
    dc.w color,0     ; fix black (so debug can flash color0)
 sprites:
-    ; red target
-    dc.w    sprpt,0
-    dc.w    sprpt+2,0
 ghost_sprites:
     ; red ghost
+    dc.w    sprpt+0,0
+    dc.w    sprpt+2,0
+nail_sprite
+    ; red target / nail / drape
     dc.w    sprpt+4,0
     dc.w    sprpt+6,0
-    ; empty
-    dc.w    sprpt+8,0
-    dc.w    sprpt+10,0
 score_sprite_entry:
     ; pink ghost / score for ghost eaten
+    dc.w    sprpt+8,0
+    dc.w    sprpt+10,0
+    ; pink target
     dc.w    sprpt+12,0
     dc.w    sprpt+14,0
-    ; empty
+    ; cyan ghost
     dc.w    sprpt+16,0
     dc.w    sprpt+18,0
-    ; cyan ghost
+    ; cyan target
     dc.w    sprpt+20,0
     dc.w    sprpt+22,0
-    ; empty
+    ; orange ghost
     dc.w    sprpt+24,0
     dc.w    sprpt+26,0
-    ; orange ghost
+    ; orange target
     dc.w    sprpt+28,0
     dc.w    sprpt+30,0
 
@@ -6164,6 +6363,11 @@ bonus_scores:
     incbin  "bonus_scores_2.bin"    ; 500
     incbin  "bonus_scores_3.bin"    ; 700
 
+red_ghost_with_leg_left
+    incbin  "red_ghost_with_leg_0.bin"
+red_ghost_with_leg_up
+    incbin  "red_ghost_with_leg_1.bin"
+    
     even
 
     
@@ -6280,8 +6484,6 @@ DECL_GHOST:MACRO
 
 ; special sprites for intermissions #2 and #3
 
-red_ghost_drape_table:
-        dc.l    red_ghost_drape_1,red_ghost_drape_2,red_ghost_drape_3
 
 nail:
     dc.l    0
@@ -6344,6 +6546,7 @@ music_2_raw
 music_2_raw_end
 
 bonus_eaten_raw
+    dc.w    0
     incbin  "bonus_eaten.raw"
     even
 bonus_eaten_raw_end
@@ -6352,10 +6555,12 @@ extra_life_raw
     even
 extra_life_raw_end
 eat_1_raw
+    dc.w    0
     incbin  "eat_1.raw"
     even
 eat_1_raw_end
 eat_2_raw
+    dc.w    0       ; pre-pad with 0W, used by ptplayer for idling
     incbin  "eat_2.raw"
     even
 eat_2_raw_end

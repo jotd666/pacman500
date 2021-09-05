@@ -50,8 +50,8 @@
   },
      {
   "name":"red_ghost_with_leg",
-  "sprite_palette":[[0,0,0],[240,0,0],[240, 176, 176], [224, 208, 240]],
-  "sprite_number":0,
+  "xxsprite_palette":[[0,0,0],[240,0,0],[240, 176, 176], [224, 208, 240]],
+  "xxsprite_number":0,
    "frames":2,
    "start_x":128,
    "start_y":112
