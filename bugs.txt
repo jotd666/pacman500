@@ -1,1 +1,0 @@
-Starting at level three, all the ghosts have a dot limit of zero for the remainder of the game and will leave the ghost house immediately at the start of every level.

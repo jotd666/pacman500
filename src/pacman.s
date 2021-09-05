@@ -120,7 +120,9 @@ FOURTH_INTERMISSION_LEVEL = 13
 ; and when one life is lost, blitzes and a0 points to move record table
 RECORD_INPUT_TABLE_SIZE = 0; $2000
 
-EXTRA_LIFE_SCORE = 10000/10  ; TEMP
+EXTRA_LIFE_SCORE = 10000/10
+
+START_LEVEL = 1
 
 ; actual nb ticks (PAL)
 NB_TICKS_PER_SEC = 50
@@ -604,9 +606,9 @@ init_new_play:
     move.b  #3,nb_lives
     clr.b   extra_life_awarded
     clr.b    music_played
-    move.w  #0,level_number
-    move.l  #0,score
-    move.l  #0,displayed_score
+    move.w  #START_LEVEL-1,level_number
+    clr.l   score
+    clr.l   displayed_score
     rts
 init_level: 
     ; level
@@ -2024,17 +2026,18 @@ draw_bonus_score:
     bsr wait_blit       ; wait else blit is going to write concurrently
     add.l  #NB_BYTES_PER_LINE*4,a2
     ; add an extra zero character to the right
-    move.l  #%0011000000000000000,d0
-    move.l  #%0100100000000000000,d1
+    move.l  #%00110000000,d0
+    move.l  #%01001000000,d1
     moveq.w #1,d2
+    addq.w  #1,a2   ; else a2 is odd: crashes on 68000/010
 .orloop
-    or.l    d0,(a2)
-    or.l    d1,(NB_BYTES_PER_LINE,a2)
-    or.l    d1,(NB_BYTES_PER_LINE*2,a2)
-    or.l    d1,(NB_BYTES_PER_LINE*3,a2)
-    or.l    d1,(NB_BYTES_PER_LINE*4,a2)
-    or.l    d1,(NB_BYTES_PER_LINE*5,a2)
-    or.l    d0,(NB_BYTES_PER_LINE*6,a2)
+    or.w    d0,(a2)
+    or.w    d1,(NB_BYTES_PER_LINE,a2)
+    or.w    d1,(NB_BYTES_PER_LINE*2,a2)
+    or.w    d1,(NB_BYTES_PER_LINE*3,a2)
+    or.w    d1,(NB_BYTES_PER_LINE*4,a2)
+    or.w    d1,(NB_BYTES_PER_LINE*5,a2)
+    or.w    d0,(NB_BYTES_PER_LINE*6,a2)
     lea (SCREEN_PLANE_SIZE*3,a2),a2
     dbf d2,.orloop
 .no_extra_zero
@@ -2802,7 +2805,8 @@ check_pac_ghosts_collisions
     tst.b   invincible_cheat_flag
     bne.b   .nomatch    
     move.w  #PLAYER_KILL_TIMER,player_killed_timer
-    bra stop_background_loop
+    bsr stop_background_loop
+    bra stop_sounds
 
 
     
@@ -3905,14 +3909,15 @@ power_pill_taken
 .gloop
     cmp.w  #MODE_EYES,mode(a0)      ; don't fright the eyes
     beq.b   .next
-    
+
     move.l  mode_timer(a0),previous_mode_timer(a0)  ; hack also saves mode
     move.w  #MODE_FRIGHT,mode(a0)
     ; set proper fright mode according to current level
     move.w  #NB_FLASH_FRAMES-1,flash_toggle_timer(a0)
     move.w  level_number(pc),d1
+    move.b  #1,reverse_flag(a0)
     cmp.w   #18,d1
-    bcc.b   .no_time_but_reverse
+    bcc.b   .no_time
     add.w   d1,d1
     add.w   d1,d1
     lea     fright_table(pc),a1
@@ -3921,13 +3926,11 @@ power_pill_taken
     move.w  d2,mode_timer(a0)
     move.w  (a1)+,flash_timer(a0)
     clr.b   flashing_as_white(a0)
-.no_time_but_reverse    
-    move.b  #1,reverse_flag(a0)
     bra.b   .next
 .no_time
     clr.w  mode_timer(a0)
     clr.w  flash_timer(a0)
-    clr.w   flash_toggle_timer(a0)
+    clr.w  flash_toggle_timer(a0)
 .next
     add.l   #Ghost_SIZEOF,a0
     dbf d0,.gloop
@@ -4516,17 +4519,21 @@ draw_pacman:
 .pdraw
     ; first roughly clear some pacman zones that can remain. We don't test the directions
     ; just clear every possible pixel that could remain whatever the direction was/is
+    bsr wait_blit   ; (just in case the blitter didn't finish writing pacman)
     move.l  previous_pacman_address(pc),a3
     clr.l   (-NB_BYTES_PER_LINE,a3)
     clr.l   (a3)
     clr.l   (NB_BYTES_PER_LINE,a3)
     clr.l   (NB_BYTES_PER_LINE*2,a3)
     clr.l   (NB_BYTES_PER_LINE*3,a3)
+    clr.l   (NB_BYTES_PER_LINE*4,a3)
     clr.l   (NB_BYTES_PER_LINE*5,a3)
     clr.l   (NB_BYTES_PER_LINE*6,a3)
     clr.l   (NB_BYTES_PER_LINE*7,a3)
     clr.l   (NB_BYTES_PER_LINE*8,a3)
     clr.l   (NB_BYTES_PER_LINE*9,a3)
+    clr.l   (NB_BYTES_PER_LINE*13,a3)
+    clr.l   (NB_BYTES_PER_LINE*14,a3)
     clr.l   (NB_BYTES_PER_LINE*15,a3)
     clr.l   (NB_BYTES_PER_LINE*16,a3)
     clr.l   (NB_BYTES_PER_LINE*17,a3)
