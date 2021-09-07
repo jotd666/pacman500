@@ -17,19 +17,17 @@ FEATURES:
 
 BUGS:
 
-- loselife, capture inky/pinky/clyde: sometimes ghost is trapped never exits?
+- loselife, capture inky/pinky/clyde: sometimes ghost is trapped never exits? monitor "ghost_who_counts_dots" var
 - pac leaving a few pixels behind
 - pacman traverses ghosts sometimes: detect collisions after each move not after ghost+pac move
-- guru on exit? (well, that's new!!)
 
 MINOR ISSUES:
 
 - some loops not correct (bad loop timing now that we went 50hz)
 - reset "frightened" palette to blue (for intro/intermission)
-- pt player sample play issues: yes but covered by sound loop most of the time
-- demo mode (record input not replaying properly!!)
+- demo mode (record input not replaying properly!!): timer pb 50/60 ???
 - after game over: intro text shifted (draw timer vs update timer bug!!!)
-- pac leaving a few pixels behind
+- guru on exit? (well, happened once)
 
   (reported, not reproduced):
 
@@ -42,12 +40,6 @@ TO DO:
 - sequence to enable cheat keys
 - highscore save
 - cheat keys to kill ghosts
-- intermission sequences:
-  * 3"20 (after level 2): ghost chases pacman, big pacman chases back => DONE
-  * 7"50 (after level 5): ghost chases pacman, tears his drape on a nail
-  * 13"00 (after level 9): ghost chases pacman with repaired drape, but returns almost naked
-  * 18"00 (after level 13): same as before
-
 
 BUILDING FROM SOURCES:
 

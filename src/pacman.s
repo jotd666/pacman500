@@ -119,7 +119,7 @@ FOURTH_INTERMISSION_LEVEL = 13
 ; ---------------debug/adjustable variables
 
 ; uncomment to test intermission screen
-;INTERMISSION_TEST = THIRD_INTERMISSION_LEVEL
+;;INTERMISSION_TEST = THIRD_INTERMISSION_LEVEL
 
 ; temp if nonzero, then records game input, intro music doesn't play
 ; and when one life is lost, blitzes and a0 points to move record table
@@ -1400,6 +1400,9 @@ draw_ghosts:
 .normal
     lea ghosts(pc),a0
     moveq.l #3,d7
+    tst.w   draw_ghost_as_repaired
+    beq.b   .gloop
+    moveq.l #0,d7   ; draw only first ghost
 .gloop
     move.w  xpos(a0),d0
     ; too on the right, don't draw sprite
@@ -1439,6 +1442,11 @@ draw_ghosts:
     lea     palette(a0),a2      ; normal ghost colors
 
     move.l  frame_table(a0),a1
+    tst.w   draw_ghost_as_repaired
+    beq.b   .no_repaired
+    ; special case intermission screen
+    lea     repaired_frame_table(pc),a1
+.no_repaired    
     move.w  frame(a0),d2
     lsr.w   #2,d2   ; 8 divide to get 0,1, divide by 4 then mask after adding direction
     cmp.w   #MODE_FRIGHT,d3
@@ -1584,6 +1592,10 @@ draw_all
     beq.b   draw_intermission_screen_level_2
     cmp.w   #SECOND_INTERMISSION_LEVEL,level_number
     beq.b   draw_intermission_screen_level_5
+    cmp.w   #THIRD_INTERMISSION_LEVEL,level_number
+    beq.b   draw_intermission_screen_level_9
+    cmp.w   #FOURTH_INTERMISSION_LEVEL,level_number
+    beq.b   draw_intermission_screen_level_9
     rts
     
 .game_start_screen
@@ -2666,6 +2678,10 @@ update_all
     beq.b   update_intermission_screen_level_2
     cmp.w   #SECOND_INTERMISSION_LEVEL,level_number
     beq.b   update_intermission_screen_level_5
+    cmp.w   #THIRD_INTERMISSION_LEVEL,level_number
+    beq.b   update_intermission_screen_level_9
+    cmp.w   #FOURTH_INTERMISSION_LEVEL,level_number
+    beq.b   update_intermission_screen_level_9
     ; other levels
     rts
     
@@ -3025,8 +3041,17 @@ update_intro_screen
     dc.w    0
 .move_period
     dc.w    0
+
+; - intermission sequences (timing from YT longplay):
+;  * 3"20 (after level 2): ghost chases pacman, big pacman chases back => DONE
+;  * 7"50 (after level 5): ghost chases pacman, tears his drape on a nail => DONE
+;  * 13"00 (after level 9): ghost chases pacman with repaired drape, but returns almost naked => DONE
+;  * 18"00 (after level 13): same as before
     
-    
+; sorry for the very bad coding on non-interactive sequences
+; (intermission/intro). Since it runs OK and always the same,
+; code is hackish but guaranteed to do the same thing everytime
+; (and coding those sequences is REALLY tedious)
 
 NAIL_DRAPE_Y_OFFSET = 29
 X_NAIL_HOOKED = X_MAX/2+26
@@ -3096,6 +3121,13 @@ draw_intermission_screen_level_5:
     bsr draw_pacman
 .outd    
     rts
+
+draw_ghost_as_repaired:
+    dc.w    0
+    
+; only left (both first values aren't used)
+repaired_frame_table
+    dc.l    repaired_0,repaired_1,repaired_0,repaired_1
     
 red_ghost_drape_table:
         dc.l    nail,red_ghost_drape_1,red_ghost_drape_2,red_ghost_drape_3
@@ -3103,6 +3135,7 @@ red_ghost_drape_table:
 update_intermission_screen_level_5
     tst.w   state_timer
     bne.b   .no_pac_demo_anim_init
+    
     
     lea music_2_sound(pc),a0
     bsr play_fx
@@ -3204,6 +3237,176 @@ show_leg:
     dc.w    0
 nail_timer:
     dc.w    0
+    
+
+draw_intermission_screen_level_9:
+    tst.w   state_timer
+    beq.b   .outd
+    
+    lea ghosts(pc),a2
+    
+.cont
+    cmp.w   #LEFT,direction(a2)
+    bne.b   .right
+    bsr draw_ghosts
+    bsr draw_pacman
+    bra.b   .outd
+.right
+    bsr hide_ghost_sprites
+    move.w  xpos(a2),d0
+    move.w  ypos(a2),d1
+    ; center => top left
+    sub.w  #8+Y_START,d1
+    ; blit
+    lea red_ghost_naked_0,a0
+    cmp.w   #8,frame(a2)
+    bcc.b   .dn
+    lea red_ghost_naked_1,a0
+.dn
+    tst.w   d0
+    bpl.b   .xpositive
+    ; cheat
+    add.w   #NB_BYTES_PER_LINE*8,d0
+    subq.w  #1,d1    
+.xpositive
+    bsr .blit_naked_ghost
+    bsr wait_blit
+    ; clip start/end (too lazy to use masks here...)
+    lea     screen_data+X_MAX/8-2+Y_PAC_ANIM*NB_BYTES_PER_LINE,a1
+    lea     screen_data+Y_PAC_ANIM*NB_BYTES_PER_LINE-4,a3
+    moveq   #3,d0
+.cy    
+    moveq   #13,d1
+    move.l  a1,a2
+    move.l  a3,a4
+.cx
+    clr.l   (a2)
+    clr.l   (a4)
+    add.w   #NB_BYTES_PER_LINE,a2
+    add.w   #NB_BYTES_PER_LINE,a4
+    dbf d1,.cx
+    add.l   #SCREEN_PLANE_SIZE,a1
+    add.l   #SCREEN_PLANE_SIZE,a3
+    dbf d0,.cy
+.outd
+    rts
+    
+.blit_naked_ghost
+    movem.l d2-d6/a0-a1/a5,-(a7)
+    lea $DFF000,A5
+	move.l #-1,bltafwm(a5)	;no masking of first/last word    
+    lea     screen_data,a1
+    moveq.l #3,d6
+.loop
+    movem.l d0-d1/a1,-(a7)
+    move.w  #6,d2       ; 32 pixels + 2 shift bytes
+    move.w  #16,d3      ; height
+    bsr blit_plane_any_internal
+    movem.l (a7)+,d0-d1/a1
+    add.l   #SCREEN_PLANE_SIZE,a1
+    add.l   #96,a0      ; 64 but shifting!
+    dbf d6,.loop
+.endblit
+    movem.l (a7)+,d2-d6/a0-a1/a5
+    rts
+    
+update_intermission_screen_level_9
+    tst.w   state_timer
+    bne.b   .no_pac_demo_anim_init
+    move.w  #1,draw_ghost_as_repaired
+    
+    lea music_2_sound(pc),a0
+    bsr play_fx
+    
+    
+    bsr init_player
+    moveq.l #0,d0
+    bsr init_ghosts
+        
+    lea player(pc),a2
+
+    move.w  #X_MAX,xpos(a2)
+    move.w  #Y_PAC_ANIM+28,ypos(a2)
+    lea ghosts(pc),a3
+    moveq   #3,d0
+    moveq.w #0,d1
+.ginit
+    move.w   #400,xpos(a3)
+    move.w  ypos(a2),ypos(a3)
+    move.w  #LEFT,direction(a3)
+    move.w  #0,h_speed(a3)
+    add.l   #Ghost_SIZEOF,a3
+    dbf d0,.ginit
+    
+    ; only red moves / is visible but is far away
+    lea     ghosts(pc),a3
+    move.w  #-1,h_speed(a3)    
+    move.w  #X_MAX+96,xpos(a3)
+    
+    
+.no_pac_demo_anim_init
+    lea music_2_sound(pc),a0
+    move.w  state_timer(pc),d0
+    sub.w   #10,d0      ; add time before replays
+    cmp.w   ss_tick_length(a0),d0
+    bne.b   .no_music_replay
+    bsr play_fx
+    
+.no_music_replay
+
+    add.w   #1,state_timer
+      
+    lea     player(pc),a4
+
+    bsr animate_pacman
+
+    lea     ghosts(pc),a3
+    ; update ghost animations but don't move
+
+    move.w  frame(a3),d2
+    addq.w  #1,d2
+    and.w   #$F,d2
+    move.w  d2,frame(a3)
+
+    move.w  (xpos,a4),d2
+    sub.w   #1,d2 ; pac
+    bmi.b   .nopm
+    move.w  d2,(xpos,a4)
+.nopm
+
+    tst.w   (h_speed,a3)
+    beq.b   .going_left
+    
+.going_left
+    move.w  (xpos,a3),d2
+    tst.w   d2
+    bpl.b   .storex
+    ; reverse
+    cmp.w   #RIGHT,(direction,a3)
+    beq.b   .storex
+    move.w  #1,(h_speed,a3)
+    move.w  #RIGHT,(direction,a3)
+    move.w #-32,d2
+.storex
+    add.w   (h_speed,a3),d2
+    cmp.w   #RIGHT,(direction,a3)
+    bne.b   .dostore
+    tst.w   d2
+    bmi.b   .dostore
+    cmp.w   #X_MAX-20,d2
+    bcc.b   .nogm
+.dostore
+    move.w  d2,(xpos,a3)
+.nogm
+
+    cmp.w   #$2B0,state_timer        ; end of second repeat of music
+    bne.b   .no_end
+    clr.w   state_timer
+    clr.w   draw_ghost_as_repaired
+    move.w  #STATE_PLAYING,current_state
+.no_end
+    rts
+
     
 draw_intermission_screen_level_2:
     tst.w   state_timer
@@ -6368,6 +6571,10 @@ red_ghost_with_leg_left
 red_ghost_with_leg_up
     incbin  "red_ghost_with_leg_1.bin"
     
+red_ghost_naked_0
+    incbin  "red_ghost_naked_0.bin"
+red_ghost_naked_1
+    incbin  "red_ghost_naked_1.bin"
     even
 
     
@@ -6482,9 +6689,17 @@ DECL_GHOST:MACRO
     DECL_GHOST  cyan
     DECL_GHOST  orange
 
-; special sprites for intermissions #2 and #3
+; special sprites for intermissions
 
 
+repaired_0
+    dc.l    0
+    incbin  "red_ghost_repaired_0.bin"
+    dc.l    0
+repaired_1
+    dc.l    0
+    incbin  "red_ghost_repaired_1.bin"
+    dc.l    0
 nail:
     dc.l    0
     incbin  "red_ghost_drape_0.bin"
