@@ -17,7 +17,6 @@ FEATURES:
 
 BUGS:
 
-- loselife, capture inky/pinky/clyde: sometimes ghost is trapped never exits? monitor "ghost_who_counts_dots" var
 - pac leaving a few pixels behind
 - pacman traverses ghosts sometimes: detect collisions after each move not after ghost+pac move
 
@@ -25,7 +24,7 @@ MINOR ISSUES:
 
 - some loops not correct (bad loop timing now that we went 50hz)
 - reset "frightened" palette to blue (for intro/intermission)
-- demo mode (record input not replaying properly!!): timer pb 50/60 ???
+- demo mode (record input not replaying properly!!) unless level is set to max difficulty!!
 - after game over: intro text shifted (draw timer vs update timer bug!!!)
 - guru on exit? (well, happened once)
 

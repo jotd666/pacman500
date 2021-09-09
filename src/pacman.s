@@ -3775,16 +3775,17 @@ update_ghosts:
 .max_time_reached
     move.l  ghost_which_counts_dots(pc),a4  ; also the next ghost to leave pen
     clr.w   ghost_release_override_timer
-    ; release the next ghost
-    st.b    pen_exit_override_flag(a4)
     ; next ghost count dots using global counter
     add.l   #Ghost_SIZEOF,a4
     move.l  a4,ghost_which_counts_dots
     cmp.l   #ghosts+4*Ghost_SIZEOF,a4
-    bne.b   .no_last_ghost
+    bcs.b   .no_last_ghost
     ; all ghosts are out: clear flag, elroy resumes as normal
     clr.b   elroy_mode_lock
 .no_last_ghost
+    ; release the next ghost (always valid, even if ghost_which_counts_dots
+    ; points at the end of the list)
+    st.b    (pen_exit_override_flag-Ghost_SIZEOF,a4)
     
 .no_life_lost
     rts
@@ -4559,6 +4560,20 @@ update_pac
 .retry
     cmp.l   #ghosts+4*Ghost_SIZEOF,a3
     bcc.b   .no_need_to_count_dots
+    
+    LOGPC   100
+    ; we need to check if current ghost is in the pen, else we can't consider it
+    move.w  (xpos,a3),d0
+    move.w  (ypos,a3),d1
+    bsr collides_with_maze
+    cmp.b   #P,d0
+    beq.b   .ghost_is_in_pen
+    
+    add.l   #Ghost_SIZEOF,a3
+    bra.b   .retry
+
+.ghost_is_in_pen    
+    ; a3 points on the next ghost, which IS in the pen
     tst.b   a_life_was_lost
     beq.b   .normal_dot_ghost_count
     ; when a life was lost (until counter resets), an alternate way is enabled
@@ -4581,18 +4596,16 @@ update_pac
     clr.b   elroy_mode_lock
     ; clears the flag that forces use of global counter
     ; only if clyde is actually in the pen
-    move.l  a3,a0
-    bsr collides_with_maze
-    cmp.b   #P,d0
-    bne.b   .no_need_to_count_dots
+
     clr.b   a_life_was_lost
     bra.b   .no_need_to_count_dots
 .normal_dot_ghost_count
     tst.b   pen_nb_dots(a3)
     bne.b   .do_ghost_count
+    ; zero: ghost is out of here
     add.l   #Ghost_SIZEOF,a3
     move.l  a3,ghost_which_counts_dots
-    bra.b   .retry
+    bra.b   .no_need_to_count_dots  ; we used to retry now we don't anymore
 .do_ghost_count
     sub.b   #1,pen_nb_dots(a3)
 .no_need_to_count_dots
