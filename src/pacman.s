@@ -155,6 +155,7 @@ TUNNEL_MASK_X = NB_BYTES_PER_MAZE_LINE*8
 TUNNEL_MASK_Y = OTHERS_YSTART_POS-27
 
 ; messages from update routine to display routine
+MSG_NONE = 0
 MSG_SHOW = 1
 MSG_HIDE = 2
 
@@ -535,7 +536,7 @@ intro:
     ; global dot counter for ghosts to exit pen is reset
     clr.b   ghost_release_dot_counter
     
-    sub.b   #1,nb_lives
+    subq.b   #1,nb_lives
     bne.b   .new_life
 
     ; 3 seconds
@@ -622,7 +623,7 @@ init_new_play:
     ; global init at game start
     move.l  #demo_moves,record_data_pointer
     clr.l   replayed_input_state
-    move.b  #3,nb_lives
+    move.b  #4,nb_lives
     clr.b   extra_life_awarded
     clr.b    music_played
     move.w  #START_LEVEL-1,level_number
@@ -825,6 +826,7 @@ init_ghosts
     clr.w   target_ytile(a0)
     clr.w   home_corner_xtile(a0)
     clr.w   home_corner_ytile(a0)
+    clr.b   flashing_as_white(a0)
     
     move.l  #PEN_XY_PINKY,pen_xtile(a0)     ; default pen position: pinky
     move.w  #RED_XSTART_POS,xpen(a0)
@@ -867,7 +869,7 @@ init_ghosts
 	move.w  #RED_XSTART_POS,xpos(a0)
 	move.w	#RED_YSTART_POS,ypos(a0)
     move.w  #LEFT,direction(a0)
-    move.w  #8,frame(a0)
+    move.w  #0,frame(a0)
     move.l  #'BLIN',character_id(a0)
 
     clr.b   pen_dot_limit(a0)   
@@ -1093,7 +1095,8 @@ init_player
     
     lea player(pc),a0
     move.l  #'PACM',character_id(a0)
-	move.w  #RED_XSTART_POS,xpos(a0)
+    ; added +1 to be 100% exact vs original positionning
+	move.w  #RED_XSTART_POS+1,xpos(a0)
 	move.w	#188+Y_START,ypos(a0)
 	move.w 	#LEFT,direction(a0)
     clr.w  speed_table_index(a0)
@@ -1107,9 +1110,11 @@ init_player
     bne.b   .played
     st.b    music_played
     moveq.l #0,d0
-    move.w  music_1_sound+ss_tick_length,d0
-    
+    move.w  music_1_sound+ss_tick_length,d1
+    move.w  d1,d0
     move.w  d0,first_ready_timer
+    lsr.w   #1,d1
+    move.w  d1,half_first_ready_timer
     IFNE    RECORD_INPUT_TABLE_SIZE
     move.l  #ORIGINAL_TICKS_PER_SEC,d0 ; no start music when recording
     ELSE
@@ -1135,9 +1140,10 @@ init_player
     clr.w   fright_timer
     clr.b   eat_toggle
     
-    bsr get_bonus_pac_plane
+    move.w  #MSG_SHOW,ready_display_message
     
-	rts	    
+    bra get_bonus_pac_plane
+    	    
 
 DEBUG_X = 8     ; 232+8
 DEBUG_Y = 8
@@ -1609,6 +1615,9 @@ draw_all
 
     ; don't do anything
     rts
+PLAYER_ONE_X = 72
+PLAYER_ONE_Y = 102-14
+
     
 .game_over
     bsr stop_sounds
@@ -1619,32 +1628,41 @@ draw_all
     ; update sound loops here, loop frequency is based on VBL
     bsr update_sound_loops
 
-    tst.w   clear_ready_message
-    beq.b   .no_ready_clr
-    clr.w   clear_ready_message
-    ; remove "READY!" message
-    lea	screen_data+SCREEN_PLANE_SIZE,a1
-    move.w  #88,d0
-    move.w  #136,d1
-    move.w  #14,d2   ; 96
-    bsr clear_plane_any
-.no_ready_clr    
-    tst.w   ready_timer
-    bmi.b   .ready_off
-.still_ready
-    tst.b   demo_mode
-    bne.b   .ready_off
-    
-    move.w  #88,d0
-    move.w  #136,d1
-    move.w  #$0ff0,d2
-    lea ready_string(pc),a0
+    move.w  ready_timer(pc),d0
+    bmi.b   .ready_end
+    ; should we clear one life & remove "player one" message ?
+    cmp.w   #MSG_SHOW,player_one_and_life_display_message
+    bne.b   .no_draw_player_one
+    clr.w   player_one_and_life_display_message
+    move.w  #PLAYER_ONE_X,d0
+    move.w  #PLAYER_ONE_Y,d1
+    move.w  #$00ff,d2
+    lea player_one_string(pc),a0
     bsr write_color_string
-    ;;bra.b   .draw_complete
-.ready_off
-    bsr draw_ghosts
+    bra.b   .no_clr_player_one
+.no_draw_player_one
 
+    cmp.w   #MSG_HIDE,player_one_and_life_display_message
+    bne.b   .no_clr_player_one
+    clr.w   player_one_and_life_display_message
+    bsr draw_lives          ; remove last life / place pac on screen
+    ; remove "PLAYER ONE" message
+    move.w  #PLAYER_ONE_X,d0
+    move.w  #PLAYER_ONE_Y,d1
+    move.w  #$00ff,d2
+    lea player_one_string_clear(pc),a0
+    bsr write_color_string
+    
+.no_ready_clr        
+.no_clr_player_one
+    move.w  ready_timer(pc),d0
+    ; should we display ghosts/pacman ?
+    cmp.w   half_first_ready_timer(pc),d0
+    bcc.b   .after_draw
+.ready_end    
+    bsr draw_ghosts
     bsr draw_pacman
+.after_draw
         
     ; timer not running, animate
     bsr animate_power_pills
@@ -1690,6 +1708,9 @@ draw_all
     move.w  fruit_score_index(pc),d0
     bsr draw_bonus_score
 .no_bonus_score_appear
+
+    bsr handle_ready_text
+
     ; score
     lea	screen_data+SCREEN_PLANE_SIZE*3,a1  ; white
     
@@ -1727,6 +1748,34 @@ draw_all
 
 stop_sounds
     move.w  #$F,_custom+dmacon
+    rts
+
+handle_ready_text
+    cmp.w   #MSG_HIDE,ready_display_message
+    bne.b   .no_ready_clr
+    clr.w   ready_display_message
+    ; remove "READY!" message
+    lea	screen_data+SCREEN_PLANE_SIZE,a1
+    move.w  #88,d0
+    move.w  #136,d1
+    move.w  #14,d2   ; 96
+    bsr clear_plane_any
+.no_ready_clr    
+    tst.w   ready_timer
+    bmi.b   .ready_off
+
+    tst.b   demo_mode
+    bne.b   .ready_off
+    
+    cmp.w   #MSG_SHOW,ready_display_message
+    bne.b   .ready_off
+    clr.w   ready_display_message
+    move.w  #88,d0
+    move.w  #136,d1
+    move.w  #$0ff0,d2
+    lea ready_string(pc),a0
+    bsr write_color_string
+.ready_off
     rts
     
 ; < D2: highscore
@@ -1788,7 +1837,7 @@ add_to_score:
     
     move.b  #1,extra_life_awarded
     move.w  #MSG_SHOW,extra_life_message
-    add.b   #1,nb_lives
+    addq.b   #1,nb_lives
     move.l A0,-(a7)
     lea extra_life_sound(pc),a0
     bsr play_loop_fx
@@ -2741,18 +2790,28 @@ update_all
     move.w   first_ready_timer(pc),d0
     cmp.w   ready_timer(pc),d0
     bne.b   .no_first_tick
+    move.w  #MSG_SHOW,player_one_and_life_display_message
     lea     music_1_sound(pc),a0
     bsr play_fx
 .no_first_tick
+
+
     tst.w   ready_timer
     bmi.b   .ready_off
     bne.b   .dec
     ; 0
-    move.w  #1,clear_ready_message
+    move.w  #MSG_HIDE,ready_display_message
     ; start music
     clr.w   loop_index
     bsr start_background_loop
 .dec
+    move.w  half_first_ready_timer(pc),d0
+    cmp.w   ready_timer(pc),d0
+    bne.b   .no_half
+    move.w  #MSG_HIDE,player_one_and_life_display_message
+    subq.b  #1,nb_lives     ; artificially
+.no_half
+
     subq.w  #1,ready_timer
     rts
 .ready_off
@@ -2768,10 +2827,16 @@ update_all
 .no_sound_loop_change    
     rts
 .update_pac_and_ghosts
+    ; collisions are checked more often to avoid the infamous
+    ; "pass through" bug. I would have loved to keep it, but it
+    ; seems that it happens a lot more with my version for an unknown reason
+    ; so since I'm not too short in CPU I'm performing the check twice as often
+    ; as soon as either pacman or the ghosts move
     bsr update_pac
-    bsr update_ghosts
     bsr check_pac_ghosts_collisions
-    rts
+    bsr update_ghosts
+    bra check_pac_ghosts_collisions
+
 remove_bonus
     move.b  #0,dot_table+BONUS_OFFSET
     move.w  #MSG_HIDE,bonus_display_message      ; tell draw routine to clear
@@ -4935,22 +5000,9 @@ draw_pacman:
     ; just clear every possible pixel that could remain whatever the direction was/is
     bsr wait_blit   ; (just in case the blitter didn't finish writing pacman)
     move.l  previous_pacman_address(pc),a3
-    clr.l   (-NB_BYTES_PER_LINE,a3)
-    clr.l   (a3)
-    clr.l   (NB_BYTES_PER_LINE,a3)
-    clr.l   (NB_BYTES_PER_LINE*2,a3)
-    clr.l   (NB_BYTES_PER_LINE*3,a3)
-    clr.l   (NB_BYTES_PER_LINE*4,a3)
-    clr.l   (NB_BYTES_PER_LINE*5,a3)
-    clr.l   (NB_BYTES_PER_LINE*6,a3)
-    clr.l   (NB_BYTES_PER_LINE*7,a3)
-    clr.l   (NB_BYTES_PER_LINE*8,a3)
-    clr.l   (NB_BYTES_PER_LINE*9,a3)
-    clr.l   (NB_BYTES_PER_LINE*13,a3)
-    clr.l   (NB_BYTES_PER_LINE*14,a3)
-    clr.l   (NB_BYTES_PER_LINE*15,a3)
-    clr.l   (NB_BYTES_PER_LINE*16,a3)
-    clr.l   (NB_BYTES_PER_LINE*17,a3)
+    REPT    18
+    clr.l   (NB_BYTES_PER_LINE*(REPTN-1),a3)
+    ENDR
 
     bsr blit_plane
     ; A1 is start of dest, use it to clear upper part and lower part
@@ -5577,6 +5629,8 @@ ready_timer:
     dc.w    0
 first_ready_timer:
     dc.w    0
+half_first_ready_timer:
+    dc.w    0
 level_blink_timer
     dc.w    0
 current_state
@@ -5669,9 +5723,11 @@ bonus_display_message:
     dc.w    0
 bonus_score_display_message:
     dc.w    0
-clear_ready_message:
+ready_display_message:
     dc.w    0
 extra_life_message:
+    dc.w    0
+player_one_and_life_display_message
     dc.w    0
     
 score_table
@@ -5829,6 +5885,10 @@ score_string
     dc.b    "       00",0
 game_over_string
     dc.b    "GAME##OVER",0
+player_one_string
+    dc.b    "PLAYER ONE",0
+player_one_string_clear
+    dc.b    "          ",0
 ready_string
     dc.b    "READY!",0
 character_nickname_string:

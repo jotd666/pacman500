@@ -10,23 +10,18 @@ REQUIRES:
 FEATURES:
 
 - original visual & sounds
+- original ghost behaviour & speed
 - 50 frames per second (PAL) even on a 1MB 68000 A500
 - all levels & bonuses & intermission sequences
 - original intro
 - joystick controlled (port 1)
 
-BUGS:
-
-- pac leaving a few pixels behind
-- pacman traverses ghosts sometimes: detect collisions after each move not after ghost+pac move
 
 MINOR ISSUES:
 
 - some loops not correct (bad loop timing now that we went 50hz)
-- reset "frightened" palette to blue (for intro/intermission)
 - demo mode (record input not replaying properly!!) unless level is set to max difficulty!!
 - after game over: intro text shifted (draw timer vs update timer bug!!!)
-- guru on exit? (well, happened once)
 
   (reported, not reproduced):
 
@@ -35,7 +30,8 @@ MINOR ISSUES:
 
 TO DO:
 
-- startup: pacman appears at mid-music
+- proper degrade startup code (& enhance exit code): vbr, graphics
+- whdload compatibility (os off, save using resload)
 - sequence to enable cheat keys
 - highscore save
 - cheat keys to kill ghosts
@@ -44,9 +40,13 @@ BUILDING FROM SOURCES:
 
 Prerequesites:
 
+- Windows or Linux
 - python
 - sox
 - vasm 68k
+
+(besides the .bin files created from png by python, the rest of the process could be built on an amiga with phxass
+ or some other assembler and sox for the amiga, but you have to be really mad to attempt it in 2021...)
 
 Build process:
 
