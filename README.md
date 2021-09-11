@@ -28,11 +28,8 @@ MINOR ISSUES:
 
 TO DO:
 
-- proper degrade startup code (& enhance exit code): vbr, graphics
-- whdload compatibility (os off, save using resload)
-- sequence to enable cheat keys
-- highscore save
-- cheat keys to kill ghosts
+- whdload compatibility (os off, save using resload): to test
+- whdload slave to write
 
 BUILDING FROM SOURCES:
 

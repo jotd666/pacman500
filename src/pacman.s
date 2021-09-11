@@ -26,6 +26,7 @@
 	include "lvo/graphics.i"
 	
     
+    include "whdload.i"
     include "whdmacros.i"
 
     incdir "../sprites"
@@ -266,20 +267,44 @@ ADD_XY_TO_A1:MACRO
 
     
 Start:
+        ; if D0 contains "WHDL"
+        ; A0 contains resload
+        
+    cmp.l   #'WHDL',D0
+    bne.b   .standard
+    move.l a0,_resload
+    move.b  d1,_keyexit
+    ;move.l  a0,a2
+    ;lea	_tags(pc),a0
+    ;jsr	resload_Control(a2)
+    bra.b   .startup
+.standard
+    ; open dos library, graphics library
+    move.l  $4.W,a6
+    lea dosname(pc),a1
+    moveq.l #0,d0
+    jsr _LVOOpenLibrary(a6)
+    move.l  d0,_dosbase
+    lea graphicsname(pc),a1
+    moveq.l #0,d0
+    jsr _LVOOpenLibrary(a6)
+    move.l  d0,_gfxbase
+    
+.startup
+    bsr load_highscores
     lea  _custom,a5
     move.b  #0,controller_joypad_1
     
-    move.l  4,a6
-    lea GRname(PC),a1               ; paramètre pour initialiser OpenLibrary
-    clr.l d0
-    jsr _LVOOpenLibrary(a6)             ; ouverture de la librairie graphique
-    move.l d0,gfxbase
-    move.l  d0,a4
+
+; no multitask
+    tst.l   _resload
+    bne.b   .no_forbid
+    move.l  _gfxbase(pc),a4
     move.l StartList(a4),gfxbase_copperlist
 
-;DMA disabled, no multitask
     move.l  4,a6
     jsr _LVOForbid(a6)
+.no_forbid
     
 ;    sub.l   a1,a1
 ;    move.l  a4,a6
@@ -545,21 +570,31 @@ intro:
     bra.b   .game_over
 .out      
     ; quit
-    bsr     restore_interrupts
-			      
+    bsr     restore_interrupts			      
     bsr     wait_blit
-
     bsr     finalize_sound
+    bsr     save_highscores
     
+    tst.l   _resload
+    beq.b   .normal_end
+    ; quit whdload
+	pea	TDREASON_OK
+	move.l	_resload(pc),-(a7)
+	addq.l	#resload_Abort,(a7)
+	rts
+    
+.normal_end
     lea _custom,a5
-    move.l  gfxbase,a1
+    move.l  _gfxbase,a1
     move.l  gfxbase_copperlist,StartList(a1) ; adresse du début de la liste
     move.l  gfxbase_copperlist,cop1lc(a5) ; adresse du début de la liste
     clr.w  copjmp1(a5)
     ;;move.w #$8060,dmacon(a5)        ; réinitialisation du canal DMA
     
     move.l  4.W,A6
-    move.l  gfxbase,a1
+    move.l  _gfxbase,a1
+    jsr _LVOCloseLibrary(a6)
+    move.l  _dosbase,a1
     jsr _LVOCloseLibrary(a6)
     
     jsr _LVOPermit(a6)                  ; Task Switching autorisé
@@ -1724,10 +1759,13 @@ PLAYER_ONE_Y = 102-14
     move.l  d0,d2
     bsr draw_current_score
     
+    ; handle highscore in draw routine eek
     move.l  high_score(pc),d4
     cmp.l   d2,d4
     bcc.b   .no_score_update
     ; high score
+    st.b    highscore_needs_saving
+    
     move.l  d2,high_score
     bsr write_high_score
 .no_score_update
@@ -2562,7 +2600,7 @@ saved_intena
 ; trashes: none
     
 level2_interrupt:
-	movem.l	D0/A5,-(a7)
+	movem.l	D0/A0/A5,-(a7)
 	LEA	$00BFD000,A5
 	MOVEQ	#$08,D0
 	AND.B	$1D01(A5),D0
@@ -2570,7 +2608,20 @@ level2_interrupt:
 	MOVE.B	$1C01(A5),D0
 	NOT.B	D0
 	ROR.B	#1,D0		; raw key code here
-
+    bmi.b   .no_playing     ; we don't care about key release
+    ; cheat key activation sequence
+    move.l  cheat_sequence_pointer(pc),a0
+    cmp.b   (a0)+,d0
+    bne.b   .reset_cheat
+    move.l  a0,cheat_sequence_pointer
+    tst.b   (a0)
+    bne.b   .cheat_end
+    move.w  #$0FF,_custom+color    
+    st.b    cheat_keys
+.reset_cheat
+    move.l  #cheat_sequence,cheat_sequence_pointer
+.cheat_end
+    
     cmp.b   #$45,d0
     bne.b   .no_esc
     cmp.w   #STATE_INTRO_SCREEN,current_state
@@ -2579,8 +2630,12 @@ level2_interrupt:
     beq.b   .no_esc
     move.w  #STATE_GAME_OVER,current_state
 .no_esc
+    
     cmp.w   #STATE_PLAYING,current_state
     bne.b   .no_playing
+    tst.w   cheat_keys
+    beq.b   .no_playing
+        
     cmp.b   #$50,d0
     bne.b   .no_lskip
     bsr     level_completed
@@ -2637,7 +2692,7 @@ level2_interrupt:
 
 .no_playing
 
-    cmp.b   #$59,d0     ; F5
+    cmp.b   _keyexit(pc),d0
     bne.b   .no_quit
     st.b    quit_flag
 .no_quit
@@ -2648,7 +2703,7 @@ level2_interrupt:
 	BCLR	#$06,$1E01(A5)	; acknowledge key
 
 .nokey
-	movem.l	(a7)+,d0/a5
+	movem.l	(a7)+,d0/a0/a5
 	move.w	#8,_custom+intreq
 	rte
     
@@ -5607,8 +5662,85 @@ write_string:
     movem.l (a7)+,A0-A2/d1-D2
     rts
     
+load_highscores
+    lea scores_name(pc),a0
+    move.l  _resload(pc),d0
+    beq.b   .standard
+    move.l  d0,a2
+    jsr (resload_GetFileSize,a2)
+    tst.l   d0
+    beq.b   .no_file
+    ; file is present, read it
+    lea scores_name(pc),a0    
+    lea high_score(pc),a1
+    moveq.l #4,d0   ; size
+    moveq.l #0,d1   ; offset
+    jmp  (resload_LoadFileOffset,a2)
+    
+.standard
+    move.l  _dosbase(pc),a6
+    move.l  a0,d1
+    move.l  #MODE_OLDFILE,d2
+    jsr     (_LVOOpen,a6)
+    move.l  d0,d1
+    beq.b   .no_file
+    move.l  d1,d4
+    move.l  #4,d3
+    move.l  #high_score,d2
+    jsr (_LVORead,a6)
+    move.l  d4,d1
+    jsr (_LVOClose,a6)    
+.no_file
+    rts
+    
+save_highscores
+    tst.b   highscore_needs_saving
+    beq.b   .out
+    lea scores_name(pc),a0
+    move.l  _resload(pc),d0
+    beq.b   .standard
+    move.l  d0,a2
+    lea scores_name(pc),a0    
+    lea high_score(pc),a1
+    moveq.l #4,d0   ; size
+    jmp  (resload_SaveFile,a2)
+    
+.standard
+    move.l  _dosbase(pc),a6
+    move.l  a0,d1
+    move.l  #MODE_NEWFILE,d2
+    jsr     (_LVOOpen,a6)
+    move.l  d0,d1
+    beq.b   .out
+    move.l  d1,d4
+    move.l  #4,d3
+    move.l  #high_score,d2
+    jsr (_LVOWrite,a6)
+    move.l  d4,d1
+    jsr (_LVOClose,a6)    
+.out
+    rts
+    
+_dosbase
+    dc.l    0
+_gfxbase
+    dc.l    0
+_resload
+    dc.l    0
+_keyexit
+    dc.b    $59
+scores_name
+    dc.b    "pacman.high",0
+highscore_needs_saving
+    dc.b    0
+graphicsname:   dc.b "graphics.library",0
+dosname
+        dc.b    "dos.library",0
+            even
     include ReadJoyPad.s
     ; variables
+gfxbase_copperlist
+    dc.l    0
     
 previous_random
     dc.l    0
@@ -5680,6 +5812,10 @@ ghost_eaten_timer:
 bonus_score_timer:
     dc.w    0
 fright_timer:
+    dc.w    0
+cheat_sequence_pointer
+    dc.l    cheat_sequence
+cheat_keys
     dc.w    0
 death_frame_offset
     dc.w    0
@@ -5782,12 +5918,10 @@ player_kill_anim_table:
     even
 
     
-gfxbase
-    dc.l    0
-gfxbase_copperlist
-    dc.l    0
-GRname:   dc.b "graphics.library",0
 
+cheat_sequence
+    dc.b    $26,$18,$14,$22,0
+    even
 ; table with 2 bytes: 60hz clock, 1 byte: move mask for the demo
 demo_moves:
     incbin  "pacman_moves.bin"
