@@ -6240,8 +6240,8 @@ update_sound_loops:
     beq.b   .next ; no more repeats
     subq.w  #1,ss_current_repeat(a0)
 .play
-    move.w  ss_vbl_length(a0),ss_current_vbl(a0)  ; reset loop VBL timer TEMP 10/50s...
     bsr play_fx
+    move.w  ss_vbl_length(a0),ss_current_vbl(a0)  ; reset loop VBL timer
 .next
     dbf d2,.ulloop
     rts
@@ -6283,8 +6283,8 @@ SOUND_ENTRY:MACRO
     dc.b    \3
     dc.b    $01
     dc.w    \2,0
-    dc.w    NB_TICKS_PER_SEC*(\1_raw_end-\1_raw)/SOUNDFREQ
-    dc.w    ORIGINAL_TICKS_PER_SEC*(\1_raw_end-\1_raw)/SOUNDFREQ
+    dc.w    (NB_TICKS_PER_SEC*(\1_raw_end-\1_raw))/SOUNDFREQ-1
+    dc.w    (ORIGINAL_TICKS_PER_SEC*(\1_raw_end-\1_raw))/SOUNDFREQ
 \1_sound_end
     ds.b    \1_sound_end-\1_sound+Sound_SIZEOF,0
     ENDM
@@ -6834,7 +6834,6 @@ music_2_raw
 music_2_raw_end
 
 bonus_eaten_raw
-    dc.w    0
     incbin  "bonus_eaten.raw"
     even
 bonus_eaten_raw_end
@@ -6843,12 +6842,10 @@ extra_life_raw
     even
 extra_life_raw_end
 eat_1_raw
-    dc.w    0
     incbin  "eat_1.raw"
     even
 eat_1_raw_end
 eat_2_raw
-    dc.w    0       ; pre-pad with 0W, used by ptplayer for idling
     incbin  "eat_2.raw"
     even
 eat_2_raw_end

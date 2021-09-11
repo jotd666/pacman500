@@ -16,12 +16,10 @@ FEATURES:
 - original intro
 - joystick controlled (port 1)
 
-
 MINOR ISSUES:
 
-- some loops not correct (bad loop timing now that we went 50hz)
-- demo mode (record input not replaying properly!!) unless level is set to max difficulty!!
-- after game over: intro text shifted (draw timer vs update timer bug!!!)
+- sound loops not correct (bad loop timing, tricky to make it right)
+- demo mode (record input not replaying properly) unless level is set to max difficulty!!
 
   (reported, not reproduced):
 
