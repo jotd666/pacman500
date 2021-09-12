@@ -15,21 +15,11 @@ FEATURES:
 - all levels & bonuses & intermission sequences
 - original intro
 - joystick controlled (port 1)
+- can run directly from shell or from whdload (fast machines/complex configurations)
 
 MINOR ISSUES:
 
-- sound loops not correct (bad loop timing, tricky to make it right)
-- demo mode (record input not replaying properly) unless level is set to max difficulty!!
-
-  (reported, not reproduced):
-
-- 'Game Over' text staying up even when playing
-- had to downgrade to OCS display in the Boot Menu as AGA gave corrupted graphics
-
-TO DO:
-
-- whdload compatibility (os off, save using resload): to test
-- whdload slave to write
+- sound loops not correct (bad loop timing => pops, tricky to make it right)
 
 BUILDING FROM SOURCES:
 

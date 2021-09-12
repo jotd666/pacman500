@@ -124,7 +124,10 @@ FOURTH_INTERMISSION_LEVEL = 13
 
 ; temp if nonzero, then records game input, intro music doesn't play
 ; and when one life is lost, blitzes and a0 points to move record table
-RECORD_INPUT_TABLE_SIZE = 0; $2000
+; a1 points to the end of the table
+; 100 means 100 seconds of recording at least (not counting the times where
+; the player (me :)) isn't pressing any direction at all.
+;RECORD_INPUT_TABLE_SIZE = 100*ORIGINAL_TICKS_PER_SEC
 
 EXTRA_LIFE_SCORE = 10000/10
 
@@ -315,7 +318,7 @@ Start:
     move.w  #STATE_INTRO_SCREEN,current_state
     
     
-    IFEQ    RECORD_INPUT_TABLE_SIZE
+    IFND    RECORD_INPUT_TABLE_SIZE
     ; uncomment to test demo mode right now
     ;;st.b    demo_mode
     ENDC
@@ -538,7 +541,7 @@ intro:
     add.w   #1,level_number
     bra.b   .new_level
 .life_lost
-    IFNE    RECORD_INPUT_TABLE_SIZE
+    IFD    RECORD_INPUT_TABLE_SIZE
     lea record_input_table,a0
     move.l  record_data_pointer(pc),a1
     ; pause so debugger can grab data
@@ -564,19 +567,20 @@ intro:
     subq.b   #1,nb_lives
     bne.b   .new_life
 
+    ; save highscores if whdload
+    tst.l   _resload
+    beq.b   .no_save
+    bsr     save_highscores
+.no_save
     ; 3 seconds
     move.w  #ORIGINAL_TICKS_PER_SEC*3,state_timer
     move.w  #STATE_GAME_OVER,current_state
     bra.b   .game_over
 .out      
     ; quit
-    bsr     restore_interrupts			      
-    bsr     wait_blit
-    bsr     finalize_sound
-    bsr     save_highscores
-    
     tst.l   _resload
     beq.b   .normal_end
+    
     ; quit whdload
 	pea	TDREASON_OK
 	move.l	_resload(pc),-(a7)
@@ -584,6 +588,11 @@ intro:
 	rts
     
 .normal_end
+    bsr     restore_interrupts
+    bsr     wait_blit
+    bsr     finalize_sound
+    bsr     save_highscores
+
     lea _custom,a5
     move.l  _gfxbase,a1
     move.l  gfxbase_copperlist,StartList(a1) ; adresse du début de la liste
@@ -665,6 +674,7 @@ init_new_play:
     clr.l   score
     clr.l   displayed_score
     rts
+    
 init_level: 
     ; level
     move.w  level_number,d2
@@ -691,7 +701,9 @@ init_level:
     clr.b   elroy_mode_lock
     clr.b   a_life_was_lost
     
-    
+    ; sound loop
+    clr.w   loop_index
+
     ; global dot counter for ghosts to exit pen
     clr.b   ghost_release_dot_counter
     
@@ -1150,7 +1162,7 @@ init_player
     move.w  d0,first_ready_timer
     lsr.w   #1,d1
     move.w  d1,half_first_ready_timer
-    IFNE    RECORD_INPUT_TABLE_SIZE
+    IFD    RECORD_INPUT_TABLE_SIZE
     move.l  #ORIGINAL_TICKS_PER_SEC,d0 ; no start music when recording
     ELSE
     tst.b   demo_mode
@@ -1159,7 +1171,7 @@ init_player
 .no_demo
     ENDC
 .played
-    IFNE    RECORD_INPUT_TABLE_SIZE
+    IFD    RECORD_INPUT_TABLE_SIZE
     move.l  #record_input_table,record_data_pointer ; start of table
     clr.l   previous_joystick_state
     ENDC
@@ -2628,6 +2640,7 @@ level2_interrupt:
     beq.b   .no_esc
     cmp.w   #STATE_GAME_START_SCREEN,current_state
     beq.b   .no_esc
+    move.w  #ORIGINAL_TICKS_PER_SEC*2,state_timer
     move.w  #STATE_GAME_OVER,current_state
 .no_esc
     
@@ -2857,7 +2870,6 @@ update_all
     ; 0
     move.w  #MSG_HIDE,ready_display_message
     ; start music
-    clr.w   loop_index
     bsr start_background_loop
 .dec
     move.w  half_first_ready_timer(pc),d0
@@ -4522,7 +4534,7 @@ update_pac
     subq.w  #1,prepost_turn(a4)
 .ptzero
     move.l  joystick_state(pc),d0
-    IFNE    RECORD_INPUT_TABLE_SIZE
+    IFD    RECORD_INPUT_TABLE_SIZE
     bsr     record_input
     ENDC
     tst.b   demo_mode
@@ -4949,10 +4961,14 @@ update_pac
     clr.w   ghost_release_override_timer
     rts
     
-    IFNE    RECORD_INPUT_TABLE_SIZE
+    IFD    RECORD_INPUT_TABLE_SIZE
 record_input:
+    tst.l   d0
+    bne.b   .store
+    ; 0 twice: ignore (saves space)
     cmp.l   previous_joystick_state(pc),d0
     beq.b   .no_input
+.store
     move.l  d0,previous_joystick_state
     clr.b   d1
     ; now store clock & joystick state, "compressed" to 4 bits (up,down,left,right)
@@ -5752,7 +5768,7 @@ record_data_pointer
     dc.l    0
 record_input_clock
     dc.w    0    
-    IFNE    RECORD_INPUT_TABLE_SIZE
+    IFD    RECORD_INPUT_TABLE_SIZE
 previous_joystick_state
     dc.l    0
 
@@ -6621,7 +6637,7 @@ HWSPR_TAB_XPOS:
 HWSPR_TAB_YPOS:
 	ds.l	512
     
-    IFNE   RECORD_INPUT_TABLE_SIZE
+    IFD   RECORD_INPUT_TABLE_SIZE
 record_input_table:
     ds.b    RECORD_INPUT_TABLE_SIZE
     ENDC
