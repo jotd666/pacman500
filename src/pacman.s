@@ -379,6 +379,10 @@ Start:
     move.w #0,bpl2mod(a5)
 
 intro:
+    lea _custom,a5
+    move.w  #$7FFF,(intena,a5)
+    move.w  #$7FFF,(intreq,a5)
+
     ; small random to change ghosts names from time to time (1 out of 5 after a game over)
     lea character_text_table_en(pc),a0
     cmp.w    #1,vbl_counter
@@ -1667,7 +1671,6 @@ PLAYER_ONE_Y = 102-14
 
     
 .game_over
-    bsr stop_sounds
     bsr clear_bonus
     bsr write_game_over
     bra.b   .draw_complete
@@ -2843,6 +2846,7 @@ update_all
      rts
      
 .game_over
+    bsr stop_sounds
     bsr.b   stop_background_loop
 
     tst.w   state_timer
@@ -3150,9 +3154,10 @@ update_intro_screen
     lsr.w   #3,d4
     cmp.w   d4,d3
     bne.b   .no_eat
-    move.w  #MODE_EYES,mode(a3)
     move.w  #X_MAX*2,xpos(a3)   ; hidden
+    exg a3,a4       ; routine expects ghost structure in a4, not a3
     bsr a_ghost_was_eaten
+    exg a3,a4
     move.w  state_timer,last_ghost_eaten_state_timer
     bra.b   .storex
 .no_eat
