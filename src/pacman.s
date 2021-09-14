@@ -4449,8 +4449,11 @@ power_pill_taken
     cmp.w  #MODE_EYES,mode(a0)      ; don't fright the eyes
     beq.b   .next
 
+    cmp.w   #MODE_FRIGHT,mode(a0)
+    beq.b   .already_fright     ; don't save previous mode if fright!!!
     move.l  mode_timer(a0),previous_mode_timer(a0)  ; hack also saves mode
     move.w  #MODE_FRIGHT,mode(a0)
+.already_fright    
     ; set proper fright mode according to current level
     move.w  #NB_FLASH_FRAMES-1,flash_toggle_timer(a0)
     move.w  level_number(pc),d1
