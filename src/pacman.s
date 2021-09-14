@@ -4850,6 +4850,7 @@ update_pac
         
     cmp.w   xpos(a4),d5
     beq.b   .ddv
+    add.w   d4,d3       ; new move y too
     move.w  #PREPOST_TURN_LOCK,prepost_turn(a4)
 .ddv
     
@@ -4909,6 +4910,7 @@ update_pac
     ; set aligned value in y (corner cut)
     cmp.w   ypos(a4),d5
     beq.b   .dd
+    add.w   d4,d2       ; new move x too
     move.w  #PREPOST_TURN_LOCK,prepost_turn(a4)
 .dd
     ; handle tunnel
