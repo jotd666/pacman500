@@ -5,7 +5,7 @@ the original, though.
 
 REQUIRES:
 
-- Any kickstart, 1MB memory (could be reduced to 512k with lower quality sounds)
+- Any kickstart, 512k memory
 
 FEATURES:
 
@@ -20,6 +20,18 @@ FEATURES:
 MINOR ISSUES:
 
 - sound loops not correct (bad loop timing => pops, tricky to make it right)
+- one wasted bitplane because of full palette passed when dumping bobs
+- wasted number of lines when allocating screen memory
+- play music on 2 channels to get "stereo"
+
+CREDITS:
+
+- jotd: code and gfx/sfx conversion
+- no9: music conversion to protracker
+- phx: sfx/module player
+- meynaf: random routine
+- eab forum: useful advice & support
+- namco: original game :)
 
 BUILDING FROM SOURCES:
 
@@ -39,6 +51,7 @@ Build process:
   just run the "convert_sprites.py" python script, then use the "convert_sounds.py"
   python script (audio).
 - python and sox must be installed to be able to perform the wav2raw conversions
+- get "bitplanelib.py" (asset conversion tool needs it) at https://github.com/jotd666/amiga68ktools.git
 
 Binary assets must be created first, then makefile must be called to create the "pacman" program
 

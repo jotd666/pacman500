@@ -131,7 +131,7 @@ FOURTH_INTERMISSION_LEVEL = 13
 
 EXTRA_LIFE_SCORE = 10000/10
 
-START_LEVEL = 1
+START_LEVEL = 1  ;+FIRST_INTERMISSION_LEVEL
 
 ; --------------- end debug/adjustable variables
 
@@ -1161,7 +1161,7 @@ init_player
     bne.b   .played
     st.b    music_played
     moveq.l #0,d0
-    move.w  music_1_sound+ss_tick_length,d1
+    move.w  #264,d1     ; seems okay, matches intro music length
     move.w  d1,d0
     move.w  d0,first_ready_timer
     lsr.w   #1,d1
@@ -1800,8 +1800,8 @@ PLAYER_ONE_Y = 102-14
     rts
 
 stop_sounds
-    move.w  #$F,_custom+dmacon
-    rts
+    lea _custom,a6
+    bra _mt_end
 
 handle_ready_text
     cmp.w   #MSG_HIDE,ready_display_message
@@ -2863,8 +2863,8 @@ update_all
     cmp.w   ready_timer(pc),d0
     bne.b   .no_first_tick
     move.w  #MSG_SHOW,player_one_and_life_display_message
-    lea     music_1_sound(pc),a0
-    bsr play_fx
+    moveq.l #0,d0
+    bsr play_music
 .no_first_tick
 
 
@@ -2874,6 +2874,7 @@ update_all
     ; 0
     move.w  #MSG_HIDE,ready_display_message
     ; start music
+    bsr stop_sounds
     bsr start_background_loop
 .dec
     move.w  half_first_ready_timer(pc),d0
@@ -3274,8 +3275,8 @@ update_intermission_screen_level_5
     bne.b   .no_pac_demo_anim_init
     
     
-    lea music_2_sound(pc),a0
-    bsr play_fx
+    moveq.l  #1,d0
+    bsr play_music
     
     clr.w   nail_timer
     clr.w   show_leg
@@ -3306,14 +3307,7 @@ update_intermission_screen_level_5
     
     
 .no_pac_demo_anim_init
-    lea music_2_sound(pc),a0
-    move.w  state_timer(pc),d0
-    sub.w   #10,d0      ; add time before replays
-    cmp.w   ss_tick_length(a0),d0
-    bne.b   .no_music_replay
-    bsr play_fx
-    
-.no_music_replay
+    bsr handle_music_2_replay
 
     add.w   #1,state_timer
       
@@ -3375,7 +3369,23 @@ show_leg:
 nail_timer:
     dc.w    0
     
-
+DEMO_TUNE_LEN = $13C
+handle_music_2_replay
+    move.w  state_timer(pc),d0
+    move.w  d0,$100
+    cmp.w   #DEMO_TUNE_LEN*2+2,d0
+    beq.b   stop_sounds
+    cmp.w   #DEMO_TUNE_LEN,d0
+    bne.b   .no_music_stop
+    bra stop_sounds
+.no_music_stop
+    cmp.w   #DEMO_TUNE_LEN+2,d0
+    bne.b   .no_music_replay
+    moveq.l  #1,d0
+    bra play_music
+.no_music_replay
+    rts
+    
 draw_intermission_screen_level_9:
     tst.w   state_timer
     beq.b   .outd
@@ -3452,8 +3462,8 @@ update_intermission_screen_level_9
     bne.b   .no_pac_demo_anim_init
     move.w  #1,draw_ghost_as_repaired
     
-    lea music_2_sound(pc),a0
-    bsr play_fx
+    moveq.l #1,d0
+    bsr play_music
     
     
     bsr init_player
@@ -3482,14 +3492,7 @@ update_intermission_screen_level_9
     
     
 .no_pac_demo_anim_init
-    lea music_2_sound(pc),a0
-    move.w  state_timer(pc),d0
-    sub.w   #10,d0      ; add time before replays
-    cmp.w   ss_tick_length(a0),d0
-    bne.b   .no_music_replay
-    bsr play_fx
-    
-.no_music_replay
+    bsr handle_music_2_replay
 
     add.w   #1,state_timer
       
@@ -3565,8 +3568,8 @@ update_intermission_screen_level_2
     tst.w   state_timer
     bne.b   .no_pac_demo_anim_init
     
-    lea music_2_sound(pc),a0
-    bsr play_fx
+    moveq.l #1,d0
+    bsr play_music
     
     bsr init_player
     moveq.l #0,d0
@@ -3595,14 +3598,7 @@ update_intermission_screen_level_2
     move.w  #ORIGINAL_TICKS_PER_SEC+ORIGINAL_TICKS_PER_SEC/2,.pac_wait_timer
 
 .no_pac_demo_anim_init
-    lea music_2_sound(pc),a0
-    move.w  state_timer(pc),d0
-    sub.w   #10,d0      ; add time before replays
-    cmp.w   ss_tick_length(a0),d0
-    bne.b   .no_music_replay
-    bsr play_fx
-    
-.no_music_replay
+    bsr handle_music_2_replay
 
     add.w   #1,state_timer
       
@@ -4701,7 +4697,6 @@ update_pac
     cmp.l   #ghosts+4*Ghost_SIZEOF,a3
     bcc.b   .no_need_to_count_dots
     
-    LOGPC   100
     ; we need to check if current ghost is in the pen, else we can't consider it
     move.w  (xpos,a3),d0
     move.w  (ypos,a3),d1
@@ -6324,7 +6319,21 @@ is_elroy:
     
     LABEL   Sound_SIZEOF
     
-
+; < D0: track start number
+play_music
+    movem.l d0-a6,-(a7)
+    lea _custom,a6
+    lea music,a0
+    sub.l   a1,a1
+    bsr _mt_init
+    ; set master volume a little less loud
+    lea MasterVolTab30,a0
+    lea mt_data,a4
+    move.l  a0,mt_MasterVolTab(a4)
+    bsr _mt_start
+    movem.l (a7)+,d0-a6
+    rts
+    
 ; < A0: sound struct
 play_fx
     tst.b   demo_mode
@@ -6464,8 +6473,6 @@ SOUND_ENTRY:MACRO
     SOUND_ENTRY loop_5,-1,0
     SOUND_ENTRY loop_fright,-1,0
     SOUND_ENTRY loop_eyes,-1,0
-    SOUND_ENTRY music_1,0,0
-    SOUND_ENTRY music_2,0,0
 
     dc.l    0
     
@@ -6984,14 +6991,7 @@ ghost_eaten_raw
     incbin  "ghost_eaten.raw"
     even
 ghost_eaten_raw_end
-music_1_raw
-    incbin  "music_1.raw"
-    even
-music_1_raw_end
-music_2_raw
-    incbin  "music_2.raw"
-    even
-music_2_raw_end
+
 
 bonus_eaten_raw
     incbin  "bonus_eaten.raw"
@@ -7042,5 +7042,8 @@ loop_eyes_raw_end
 empty_sprite
     dc.l    0,0
 
+music
+    incbin  "pacman_convert.mod"
+    
     
     	
