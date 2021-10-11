@@ -129,7 +129,7 @@ FOURTH_INTERMISSION_LEVEL = 13
 ; the player (me :)) isn't pressing any direction at all.
 ;RECORD_INPUT_TABLE_SIZE = 100*ORIGINAL_TICKS_PER_SEC
 
-EXTRA_LIFE_SCORE = 70/10
+EXTRA_LIFE_SCORE = 10000/10
 
 START_LEVEL = 1  ;+FIRST_INTERMISSION_LEVEL
 
@@ -6316,12 +6316,6 @@ is_elroy:
     UWORD   ss_vol
     UBYTE   ss_channel
     UBYTE   ss_pri
-    ; custom shit
-    UWORD   ss_nb_repeats
-    UWORD   ss_current_repeat
-    UWORD   ss_vbl_length       ; auto compute
-    UWORD   ss_tick_length       ; auto compute
-    UWORD   ss_current_vbl
     
     LABEL   Sound_SIZEOF
     
@@ -6393,30 +6387,25 @@ SOUND_ENTRY:MACRO
 \1_sound
     dc.l    \1_raw
     dc.w    (\1_raw_end-\1_raw)/2,FXFREQBASE/SOUNDFREQ,64
-    dc.b    \3
+    dc.b    \2
     dc.b    $01
-    dc.w    \2,0
-    dc.w    (NB_TICKS_PER_SEC*(\1_raw_end-\1_raw))/SOUNDFREQ-1
-    dc.w    (ORIGINAL_TICKS_PER_SEC*(\1_raw_end-\1_raw))/SOUNDFREQ
-\1_sound_end
-    ds.b    \1_sound_end-\1_sound+Sound_SIZEOF,0
     ENDM
     
-    ; radix,repeats (0: none, -1: infinite) ,channel (0-3)
-    SOUND_ENTRY killed,0,1
-    SOUND_ENTRY credit,0,1
-    SOUND_ENTRY extra_life,10,1
-    SOUND_ENTRY ghost_eaten,0,2
-    SOUND_ENTRY bonus_eaten,0,3
-    SOUND_ENTRY eat_1,0,3
-    SOUND_ENTRY eat_2,0,3
-    SOUND_ENTRY loop_1,0,0
-    SOUND_ENTRY loop_2,0,0
-    SOUND_ENTRY loop_3,0,0
-    SOUND_ENTRY loop_4,0,0
-    SOUND_ENTRY loop_5,0,0
-    SOUND_ENTRY loop_fright,0,0
-    SOUND_ENTRY loop_eyes,0,0
+    ; radix,channel (0-3)
+    SOUND_ENTRY killed,1
+    SOUND_ENTRY credit,1
+    SOUND_ENTRY extra_life,1
+    SOUND_ENTRY ghost_eaten,2
+    SOUND_ENTRY bonus_eaten,3
+    SOUND_ENTRY eat_1,3
+    SOUND_ENTRY eat_2,3
+    SOUND_ENTRY loop_1,0
+    SOUND_ENTRY loop_2,0
+    SOUND_ENTRY loop_3,0
+    SOUND_ENTRY loop_4,0
+    SOUND_ENTRY loop_5,0
+    SOUND_ENTRY loop_fright,0
+    SOUND_ENTRY loop_eyes,0
 
     dc.l    0
     
