@@ -21,44 +21,11 @@ for wav_file in wav_files:
     subprocess.check_call(cmd)
     with open(raw_file,"rb") as f:
         contents = f.read()
-    if "loop" in raw_file:
-        # double the size, the loops are too short to be reworked without it being noticed
-        if nb_duplicates > 1:
-            contents = b"".join(contents for _ in range(nb_duplicates))
-        # file size must be (roughly) a multiple of sampling rate/50 (here 441)
-        size = len(contents)
-        divider = (sampling_rate//50)
-        nb_chunks,modulus = divmod(size,divider)
-        aligned_size=nb_chunks*divider + extra_margin
 
-        ratio = size/aligned_size
-        if ratio-int(ratio) < 1e-3:
-            # loop is almost perfect, okay, don't hack it any further
-            print("{}: almost perfect loop".format(raw_file))
-        else:
-            # resample just enough so the size is a multiple of rate/50
-            # (re-do the conversion process from the start)
-            new_sampling_rate = (aligned_size * sampling_rate + 0.5) // size
-            cmd = get_sox_cmd(new_sampling_rate,raw_file)
-            subprocess.check_call(cmd)
-            with open(raw_file,"rb") as f:
-                contents = f.read()
-                # double size again
-            if nb_duplicates > 1:
-                contents = b"".join(contents for _ in range(nb_duplicates))
-            size = len(contents)
-            nb_chunks,new_modulus = divmod(size,divider)
-            aligned_size=nb_chunks*divider
-            ratio = size/aligned_size
-
-            print(raw_file,aligned_size,size,ratio)
+    # pre-pad with 0W, used by ptplayer for idling
+    if contents[0] != b'\x00' and contents[1] != b'\x00':
+        # add zeroes
         with open(raw_file,"wb") as f:
+           f.write(struct.pack(">H",0))
            f.write(contents)
-    else:
-        # pre-pad with 0W, used by ptplayer for idling
-        if contents[0] != b'\x00' and contents[1] != b'\x00':
-            # add zeroes
-            with open(raw_file,"wb") as f:
-               f.write(struct.pack(">H",0))
-               f.write(contents)
 

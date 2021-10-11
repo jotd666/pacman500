@@ -129,7 +129,7 @@ FOURTH_INTERMISSION_LEVEL = 13
 ; the player (me :)) isn't pressing any direction at all.
 ;RECORD_INPUT_TABLE_SIZE = 100*ORIGINAL_TICKS_PER_SEC
 
-EXTRA_LIFE_SCORE = 10000/10
+EXTRA_LIFE_SCORE = 70/10
 
 START_LEVEL = 1  ;+FIRST_INTERMISSION_LEVEL
 
@@ -1676,7 +1676,7 @@ PLAYER_ONE_Y = 102-14
     bra.b   .draw_complete
 .playing
     ; update sound loops here, loop frequency is based on VBL
-    bsr update_sound_loops
+    bsr update_extra_life_sound_loop
 
     move.w  ready_timer(pc),d0
     bmi.b   .ready_end
@@ -1892,8 +1892,8 @@ add_to_score:
     move.w  #MSG_SHOW,extra_life_message
     addq.b   #1,nb_lives
     move.l A0,-(a7)
-    lea extra_life_sound(pc),a0
-    bsr play_loop_fx
+    move.w  #10,extra_life_sound_counter
+    clr.w   extra_life_sound_timer
     move.l  (a7)+,a0
 .no_play
     rts
@@ -4425,6 +4425,9 @@ resume_sound_loop:
 .normal
     bra start_background_loop
     
+play_loop_fx
+    lea _custom,a6
+    bra _mt_loopfx
     
 ; what: sets game state when a power pill has been taken
 ; trashes: A0,A1,D0,D1
@@ -5823,6 +5826,11 @@ score_frame
     dc.l    0
 global_speed_table
     dc.l    0
+extra_life_sound_counter
+    dc.w    0
+extra_life_sound_timer
+    dc.w    0
+        
 ; 0: level 1
 level_number:
     dc.w    0
@@ -5835,7 +5843,7 @@ bonus_score_timer:
 fright_timer:
     dc.w    0
 cheat_sequence_pointer
-    dc.l    cheat_sequence
+    dc.l    cheat_sequence    
 cheat_keys
     dc.w    0
 death_frame_offset
@@ -5891,8 +5899,6 @@ score_table
     dc.w    0,1,5
 fruit_score     ; must follow score_table
     dc.w    10
-loop_array:
-    dc.l    0,0,0,0
     
 big_pac_table:
     dc.l    big_pac_2,big_pac_2,big_pac_0,big_pac_1,big_pac_1,big_pac_0
@@ -6343,100 +6349,38 @@ play_fx
 .no_sound
     rts
     
-; < A0: sound struct
-play_loop_fx
-    tst.b   demo_mode
-    bne.b   .no_sound
-    movem.l  d0-d1/a1,-(a7)
-    moveq   #0,d0
-    move.b  ss_channel(a0),d0
-    bmi.b   .out            ; no channel set: out
-    add.w   d0,d0
-    add.w   d0,d0
-    lea loop_array(pc),a1
-    move.l  (a1,d0.w),d1
-    beq.b   .was_free
-    ; not free: stop previous fx from repeating
-    exg.l  d1,a0
-    clr.w  ss_current_repeat(a0)
-    exg.l  a0,d1
-.was_free
-    move.l  a0,(a1,d0.w)
-    move.w  #0,ss_current_vbl(a0)  ; reset loop VBL timer TEMP 10/50s...
-    move.w  ss_nb_repeats(a0),ss_current_repeat(a0)   ; set number of repeats
-.out
-    movem.l  (a7)+,d0-d1/a1
-.no_sound
-    rts
-
-stop_loop_fx
-    move.w  d0,-(a7)
-    clr.w   ss_current_repeat(a0)  ; stop loop counter
-    moveq.l #0,d0
-    move.b  ss_channel(a0),d0
-    bmi.b   .nope
-    move.w  d1,-(a7)
-    moveq   #0,d1
-    bset    d0,d1
-    lea _custom,a0
-    move.w  d1,dmacon(a0)
-    move.w  (a7)+,d1
-.nope
-    
-    move.w  (a7)+,d0
-    rts
-    
-; custom addition to ptplayer: ability to loop sound several times or infinite
-update_sound_loops:
-    lea loop_array(pc),a1
-    ; check timers
-    moveq.w #3,d2
-    
-.ulloop
-    move.l  (a1)+,d0
-    beq.b   .next
-    move.l  d0,a0
-    ; check timer: do we need to play again?
-    move.w  ss_current_vbl(a0),d0
-    beq.b   .played
-    subq.w  #1,d0       ; decrease
-    move.w  d0,ss_current_vbl(a0)
-    bra.b   .next
-.played:
-    ; ended playing, do we need to play again?
-    tst.w   ss_current_repeat(a0)
-    bmi.b   .play
-    beq.b   .next ; no more repeats
-    subq.w  #1,ss_current_repeat(a0)
-.play
+; custom addition to ptplayer: ability to loop sound several times but not infinitely
+update_extra_life_sound_loop:
+    tst.w   extra_life_sound_counter
+    beq.b   .out    
+    tst.w   extra_life_sound_timer
+    bne.b   .increase
+    ; timer = 0: play
+    lea extra_life_sound(pc),a0
     bsr play_fx
-    move.w  ss_vbl_length(a0),ss_current_vbl(a0)  ; reset loop VBL timer
-.next
-    dbf d2,.ulloop
+    sub.w   #1,extra_life_sound_counter
+.increase
+    add.w   #1,extra_life_sound_timer
+    cmp.w   #9,extra_life_sound_timer
+    bne.b   .out
+    clr.w   extra_life_sound_timer
+.out
     rts
 
 start_background_loop
+    lea _custom,a6
     move.w  loop_index(pc),d0
     add.w   d0,d0
     add.w   d0,d0
     lea     loop_table(pc),a0
     move.l  (a0,d0.w),a0    ; current loop sound
-    bra play_loop_fx
+    bra _mt_loopfx
 
 
 stop_background_loop:
-    move.w  loop_index(pc),d0
-    add.w   d0,d0
-    add.w   d0,d0
-    lea     loop_table(pc),a0
-    move.l  (a0,d0.w),a0    ; current loop sound
-    bsr stop_loop_fx
-    ; also stop fright / eyes
-    lea loop_eyes_sound(pc),a0
-    bsr stop_loop_fx
-    lea loop_fright_sound(pc),a0
-    bra stop_loop_fx
-    
+    lea _custom,a6
+    clr.w   d0
+    bra _mt_stopfx
     
     
        
@@ -6466,13 +6410,13 @@ SOUND_ENTRY:MACRO
     SOUND_ENTRY bonus_eaten,0,3
     SOUND_ENTRY eat_1,0,3
     SOUND_ENTRY eat_2,0,3
-    SOUND_ENTRY loop_1,-1,0
-    SOUND_ENTRY loop_2,-1,0
-    SOUND_ENTRY loop_3,-1,0
-    SOUND_ENTRY loop_4,-1,0
-    SOUND_ENTRY loop_5,-1,0
-    SOUND_ENTRY loop_fright,-1,0
-    SOUND_ENTRY loop_eyes,-1,0
+    SOUND_ENTRY loop_1,0,0
+    SOUND_ENTRY loop_2,0,0
+    SOUND_ENTRY loop_3,0,0
+    SOUND_ENTRY loop_4,0,0
+    SOUND_ENTRY loop_5,0,0
+    SOUND_ENTRY loop_fright,0,0
+    SOUND_ENTRY loop_eyes,0,0
 
     dc.l    0
     

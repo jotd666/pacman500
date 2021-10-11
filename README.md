@@ -19,10 +19,8 @@ FEATURES:
 
 MINOR ISSUES:
 
-- sound loops not correct (bad loop timing => pops, tricky to make it right)
 - one wasted bitplane because of full palette passed when dumping bobs
 - wasted number of lines when allocating screen memory
-- play music on 2 channels to get "stereo"
 
 CREDITS:
 
