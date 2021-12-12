@@ -58,6 +58,8 @@ def process_tiles():
     #bitplanelib.palette_dump(game_palette,"palette.s")
 
 
+    # no need for 32 colors to dump bobs
+    bob_palette = game_palette[:16]
 
     for object in tiles["objects"]:
         if object.get("ignore"):
@@ -82,11 +84,12 @@ def process_tiles():
 
             area = (x, y, x + width, y + height)
             cropped_img = sprites.crop(area)
-            if nb_frames == 1:
-                cropped_name = os.path.join(outdir,"{}.png".format(name))
-            else:
-                cropped_name = os.path.join(outdir,"{}_{}.png".format(name,i))
-            cropped_img.save(cropped_name)
+            if os.path.isdir(outdir):
+                if nb_frames == 1:
+                    cropped_name = os.path.join(outdir,"{}.png".format(name))
+                else:
+                    cropped_name = os.path.join(outdir,"{}_{}.png".format(name,i))
+                cropped_img.save(cropped_name)
 
             # save
             x_size = cropped_img.size[0]
@@ -115,7 +118,7 @@ def process_tiles():
                 img = Image.new("RGB",(img_x,cropped_img.size[1]))
                 img.paste(cropped_img)
                 # if 1 plane, pacman frames, save only 1 plane, else save all 4 planes
-                used_palette = p if len(p)==2 else game_palette
+                used_palette = p if len(p)==2 else bob_palette
 
                 namei = "{}_{}".format(name,i) if nb_frames!=1 else name
 
@@ -172,9 +175,11 @@ def process_fonts():
 
             area = (x, y, x + width, y + height)
             cropped_img = sprites.crop(area)
-            bn = "{}_{}.png".format(name,i) if nb_frames != 1 else name+".png"
-            cropped_name = os.path.join(outdir,bn)
-            cropped_img.save(cropped_name)
+            if os.path.isdir(outdir):
+
+                bn = "{}_{}.png".format(name,i) if nb_frames != 1 else name+".png"
+                cropped_name = os.path.join(outdir,bn)
+                cropped_img.save(cropped_name)
 
             # save
             x_size = cropped_img.size[0]

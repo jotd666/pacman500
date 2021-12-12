@@ -14,13 +14,16 @@ FEATURES:
 - 50 frames per second (PAL) even on a 1MB 68000 A500
 - all levels & bonuses & intermission sequences
 - original intro
-- joystick controlled (port 1)
+- joystick controlled (port 1) & keyboard (arrows & space)
 - can run directly from shell or from whdload (fast machines/complex configurations)
 
 MINOR ISSUES:
 
-- one wasted bitplane because of full palette passed when dumping bobs
-- wasted number of lines when allocating screen memory
+- repack with 2.08 RN packer
+- demo mode broken!!
+- skip intermission with fire (remove esc): big pacman not cleared!!)
+- from floppy: wait until drive is off
+- from floppy: crashes when exiting
 
 CREDITS:
 

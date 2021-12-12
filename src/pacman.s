@@ -131,7 +131,7 @@ FOURTH_INTERMISSION_LEVEL = 13
 
 EXTRA_LIFE_SCORE = 10000/10
 
-START_LEVEL = 1  ;+FIRST_INTERMISSION_LEVEL
+START_LEVEL = 1   ; +FIRST_INTERMISSION_LEVEL
 
 ; --------------- end debug/adjustable variables
 
@@ -151,7 +151,7 @@ TOTAL_NUMBER_OF_DOTS = 244
 
 NB_BYTES_PER_LINE = 40
 NB_BYTES_PER_MAZE_LINE = 28
-MAZE_PLANE_SIZE = NB_BYTES_PER_LINE*NB_LINES
+MAZE_PLANE_SIZE = NB_BYTES_PER_MAZE_LINE*NB_LINES
 SCREEN_PLANE_SIZE = 40*NB_LINES
 NB_PLANES   = 4
 
@@ -164,8 +164,10 @@ MSG_SHOW = 1
 MSG_HIDE = 2
 
 NB_TILES_PER_LINE = 2+28+2    ; 2 fake tiles in the start & end
-NB_TILE_LINES = 31+3    ; 3 fake tiles before the maze to simulate ghosts targets
+NB_MAZE_ROWS = 31
+NB_TILE_LINES = NB_MAZE_ROWS+3    ; 3 fake tiles before the maze to simulate ghosts targets
 NB_LINES = NB_TILE_LINES*8
+NB_MAZE_LINES = NB_MAZE_ROWS*8
 
 MAZE_BLINK_TIME = NB_TICKS_PER_SEC/4
 
@@ -307,6 +309,11 @@ Start:
 
     move.l  4,a6
     jsr _LVOForbid(a6)
+	sub.l	A1,A1
+	jsr	_LVOFindTask(a6)		;find ourselves
+	move.l	D0,A0
+	move.l	#-1,pr_WindowPtr(A0)	; no more system requesters (insert volume, write protected...)
+    
 .no_forbid
     
 ;    sub.l   a1,a1
@@ -391,7 +398,7 @@ intro:
 .en
     move.l  a0,character_text_table
     
-    bsr stop_background_loop
+    bsr stop_sounds    
     
     bsr hide_sprites
 
@@ -1139,6 +1146,7 @@ update_ghost_mode_timer
     rts
     
 init_player
+    clr.b   loop_playing
     ; in case player was killed / level completed 
     ; when bonus was active
     bsr remove_bonus
@@ -1161,7 +1169,7 @@ init_player
     bne.b   .played
     st.b    music_played
     moveq.l #0,d0
-    move.w  #264,d1     ; seems okay, matches intro music length
+    move.w  #262,d1     ; seems okay, matches intro music length
     move.w  d1,d0
     move.w  d0,first_ready_timer
     lsr.w   #1,d1
@@ -1177,7 +1185,7 @@ init_player
 .played
     IFD    RECORD_INPUT_TABLE_SIZE
     move.l  #record_input_table,record_data_pointer ; start of table
-    clr.l   previous_joystick_state
+    clr.l   prev_record_joystick_state
     ENDC
 
     clr.w   record_input_clock                      ; start of time
@@ -1799,7 +1807,18 @@ PLAYER_ONE_Y = 102-14
 .draw_complete
     rts
 
+stop_loop_fx:
+    ; stop loop
+    tst.b   loop_playing
+    beq.b   .no_loop
+    clr.b   loop_playing
+    moveq.l #0,d0
+    bra     _mt_stopfx      ; stop sound loop
+.no_loop
+    rts
 stop_sounds
+    bsr stop_loop_fx
+    clr.b   music_playing
     lea _custom,a6
     bra _mt_end
 
@@ -2349,7 +2368,7 @@ draw_maze:
 draw_maze_plane:
     ; copy maze data in bitplanes
     lea maze_data(pc),a0
-    move.w  #NB_LINES-1,d0
+    move.w  #NB_MAZE_LINES-1,d0
 .copyline
     move.w  #6,d1
 .copylong
@@ -2570,10 +2589,10 @@ exc10
     
 finalize_sound
     ; assuming VBR at 0
+    bsr stop_sounds
     sub.l   a0,a0
     lea _custom,a6
-    jsr _mt_remove_cia
-    move.w  #$F,dmacon(a6)   ; stop sound
+    bsr _mt_remove_cia
     rts
     
 restore_interrupts:
@@ -2623,7 +2642,11 @@ level2_interrupt:
 	MOVE.B	$1C01(A5),D0
 	NOT.B	D0
 	ROR.B	#1,D0		; raw key code here
-    bmi.b   .no_playing     ; we don't care about key release
+    lea keyboard_table(pc),a0
+    and.w   #$FF,d0
+    bclr    #7,d0
+    seq (a0,d0.w)       ; updates keyboard table
+    bne.b   .no_playing     ; we don't care about key release
     ; cheat key activation sequence
     move.l  cheat_sequence_pointer(pc),a0
     cmp.b   (a0)+,d0
@@ -2649,6 +2672,16 @@ level2_interrupt:
     
     cmp.w   #STATE_PLAYING,current_state
     bne.b   .no_playing
+    cmp.w   #STATE_PLAYING,current_state
+    bne.b   .no_playing
+    tst.b   demo_mode
+    bne.b   .no_pause
+    cmp.b   #$19,d0
+    bne.b   .no_pause
+    tst.b   music_playing
+    bne.b   .no_pause
+    eor.b   #1,pause_flag
+.no_pause    
     tst.w   cheat_keys
     beq.b   .no_playing
         
@@ -2748,6 +2781,9 @@ level3_interrupt:
     move.w  (intreqr,a5),d0
     btst    #4,d0
     beq.b   .blitter
+    tst.b   pause_flag
+    bne.b   .outcop
+.no_pause
     ; copper
     bsr draw_all
     tst.b   debug_flag
@@ -2764,12 +2800,55 @@ level3_interrupt:
     moveq.w #0,d0    
 .normal
     move.w  d0,vbl_counter
+.outcop    
     move.w  #$0010,(intreq,a5) 
     movem.l (a7)+,d0-a6
     rte    
 .vblank
+    move.l  joystick_state(pc),d2
     moveq.l #1,d0
     bsr _read_joystick
+    btst    #JPB_BTN_BLU,d0
+    beq.b   .no_second
+    btst    #JPB_BTN_BLU,d2
+    bne.b   .no_second
+    
+    ; no pause if not in game or music is playing
+    cmp.w   #STATE_PLAYING,current_state
+    bne.b   .no_second
+    tst.b   demo_mode
+    bne.b   .no_second
+    tst.b   music_playing
+    bne.b   .no_pause
+    
+    eor.b   #1,pause_flag
+.no_second
+    lea keyboard_table(pc),a0
+    tst.b   ($40,a0)    ; up key
+    beq.b   .no_fire
+    bset    #JPB_BTN_RED,d0
+.no_fire 
+    tst.b   ($4C,a0)    ; up key
+    beq.b   .no_up
+    bset    #JPB_BTN_UP,d0
+    bra.b   .no_down
+.no_up    
+    tst.b   ($4D,a0)    ; down key
+    beq.b   .no_down
+	; set DOWN
+    bset    #JPB_BTN_DOWN,d0
+.no_down    
+    tst.b   ($4F,a0)    ; left key
+    beq.b   .no_left
+	; set LEFT
+    bset    #JPB_BTN_LEFT,d0
+    bra.b   .no_right   
+.no_left
+    tst.b   ($4E,a0)    ; right key
+    beq.b   .no_right
+	; set RIGHT
+    bset    #JPB_BTN_RIGHT,d0
+.no_right        
     move.l  d0,joystick_state
     move.w  #$0020,(intreq,a5)
     movem.l (a7)+,d0-a6
@@ -2816,9 +2895,6 @@ update_all
     rts  ; bra update_power_pill_flashing
 
 .level_completed
-    bsr hide_sprites
-    bsr.b   stop_background_loop
-    bsr     stop_sounds
     subq.w  #1,maze_blink_timer
     bne.b   .no_change
     move.w  #MAZE_BLINK_TIME,maze_blink_timer
@@ -2847,7 +2923,6 @@ update_all
      
 .game_over
     bsr stop_sounds
-    bsr.b   stop_background_loop
 
     tst.w   state_timer
     bne.b   .cont
@@ -2965,7 +3040,7 @@ check_pac_ghosts_collisions
     tst.b   invincible_cheat_flag
     bne.b   .nomatch    
     move.w  #PLAYER_KILL_TIMER,player_killed_timer
-    bra stop_background_loop
+    bra stop_sounds
 
     
 .pac_eats_ghost:
@@ -3372,7 +3447,6 @@ nail_timer:
 DEMO_TUNE_LEN = $13C
 handle_music_2_replay
     move.w  state_timer(pc),d0
-    move.w  d0,$100
     cmp.w   #DEMO_TUNE_LEN*2+2,d0
     beq.b   stop_sounds
     cmp.w   #DEMO_TUNE_LEN,d0
@@ -3441,13 +3515,13 @@ draw_intermission_screen_level_9:
 .blit_naked_ghost
     movem.l d2-d6/a0-a1/a5,-(a7)
     lea $DFF000,A5
-	move.l #-1,bltafwm(a5)	;no masking of first/last word    
     lea     screen_data,a1
     moveq.l #3,d6
 .loop
     movem.l d0-d1/a1,-(a7)
     move.w  #6,d2       ; 32 pixels + 2 shift bytes
-    move.w  #16,d3      ; height
+    moveq.l #-1,d3
+    move.w  #16,d4      ; height
     bsr blit_plane_any_internal
     movem.l (a7)+,d0-d1/a1
     add.l   #SCREEN_PLANE_SIZE,a1
@@ -3570,8 +3644,9 @@ update_intermission_screen_level_2
     
     moveq.l #1,d0
     bsr play_music
+
+    bsr init_player   
     
-    bsr init_player
     moveq.l #0,d0
     bsr init_ghosts
         
@@ -4426,8 +4501,14 @@ resume_sound_loop:
     bra start_background_loop
     
 play_loop_fx
+    tst.b   demo_mode
+    bne.b   .demo
+    bsr stop_loop_fx
+    st.b    loop_playing
     lea _custom,a6
     bra _mt_loopfx
+.demo
+    rts
     
 ; what: sets game state when a power pill has been taken
 ; trashes: A0,A1,D0,D1
@@ -4486,15 +4567,19 @@ update_pac
     move.w  player_killed_timer(pc),d6
     bmi.b   .alive
     moveq.w #0,d0
+    cmp.w   #PLAYER_KILL_TIMER,d6
+    bne.b   .no_just_dead
+    bsr.b   stop_sounds
+.no_just_dead
     move.w  #PLAYER_KILL_TIMER-NB_TICKS_PER_SEC,d5
     sub.w   d6,d5
     bne.b   .no_sound
     lea killed_sound(pc),a0
     bsr play_fx
-    
+    bra.b   .zz
 .no_sound
     bcs.b   .frame_done     ; frame 0
-    bsr.b   stop_background_loop    
+.zz
     ; d5 is the timer starting from 0
     lea player_kill_anim_table(pc),a0
     move.b  (a0,d5.w),d0
@@ -4553,6 +4638,7 @@ update_pac
     move.w  #STATE_GAME_START_SCREEN,current_state
     rts
 .no_demo_end
+    clr.l   d0  ; cancel all input
     ; demo running
     ; read next timestamp
     move.l  record_data_pointer(pc),a0
@@ -4974,10 +5060,10 @@ record_input:
     tst.l   d0
     bne.b   .store
     ; 0 twice: ignore (saves space)
-    cmp.l   previous_joystick_state(pc),d0
+    cmp.l   prev_record_joystick_state(pc),d0
     beq.b   .no_input
 .store
-    move.l  d0,previous_joystick_state
+    move.l  d0,prev_record_joystick_state
     clr.b   d1
     ; now store clock & joystick state, "compressed" to 4 bits (up,down,left,right)
     btst    #JPB_BTN_RIGHT,d0
@@ -5023,10 +5109,12 @@ animate_pacman
     rts
 
 level_completed:
+    clr.w   state_timer
     move.w  #MAZE_BLINK_TIME,maze_blink_timer
     move.b  #8,maze_blink_nb_times    
     move.w  #STATE_LEVEL_COMPLETED,current_state
-    rts
+    bsr     hide_sprites
+    bra     stop_sounds    
     
 draw_pacman:
     lea     player(pc),a2
@@ -5291,9 +5379,9 @@ collides_with_maze:
 blit_plane
     movem.l d2-d4/a2-a5,-(a7)
     lea $DFF000,A5
-	move.l d2,bltafwm(a5)	;no masking of first/last word    
+	move.l d2,d3	;no masking of first/last word    
     move.w  #4,d2       ; 16 pixels + 2 shift bytes
-    move.w  #16,d3      ; 16 pixels height
+    move.w  #16,d4      ; 16 pixels height
     bsr blit_plane_any_internal
     movem.l (a7)+,d2-d4/a2-a5
     rts
@@ -5315,8 +5403,6 @@ blit_plane
 blit_plane_any:
     movem.l d2-d5/a2-a5,-(a7)
     lea $DFF000,A5
-	move.l d3,bltafwm(a5)	;no masking of first/last word
-    move.w  d4,d3   ; height
     bsr blit_plane_any_internal
     movem.l (a7)+,d2-d5/a2-a5
     rts
@@ -5325,12 +5411,12 @@ blit_plane_any:
 ; < D0,D1: x,y
 ; < A0: source
 ; < D2: width in bytes (inc. 2 extra for shifting)
-; < D3: height
+; < D3: bltfwmask
+; < D4: height
 ; blit mask set
 ; trashes D0-D5, a1
 blit_plane_any_internal:
     ; pre-compute the maximum of shit here
-    move.w  d3,d4
     lea mul40_table(pc),a2
     add.w   d1,d1
     beq.b   .d1_zero    ; optim
@@ -5340,18 +5426,18 @@ blit_plane_any_internal:
     swap    d1
 .d1_zero
     move.l  #$09f00000,d5    ;A->D copy, ascending mode
-    move    d0,d3
+    move    d0,d6
     beq.b   .d0_zero
-    and.w   #$F,D3
+    and.w   #$F,d6
     and.w   #$1F0,d0
     lsr.w   #3,d0
     add.w   d0,d1
 
-    swap    d3
-    clr.w   d3
-    lsl.l   #8,d3
-    lsl.l   #4,d3
-    or.l    d3,d5            ; add shift
+    swap    d6
+    clr.w   d6
+    lsl.l   #8,d6
+    lsl.l   #4,d6
+    or.l    d6,d5            ; add shift
 .d0_zero    
     add.l   d1,a1       ; plane position
 
@@ -5362,14 +5448,15 @@ blit_plane_any_internal:
     lsr.w   #1,d2
     add.w   d2,d4       ; blit height
 
-    ; always the same settings (ATM)
-	move.w #0,bltamod(a5)		;A modulo=bytes to skip between lines
-	move.l d5,bltcon0(a5)	
 
     ; now just wait for blitter ready to write all registers
 	bsr	wait_blit
     
     ; blitter registers set
+	move.l d3,bltafwm(a5)	;no masking of first/last word    
+    
+	clr.w   bltamod(a5)		;A modulo=bytes to skip between lines
+	move.l d5,bltcon0(a5)	
     move.w  d0,bltdmod(a5)	;D modulo
 	move.l a0,bltapt(a5)	;source graphic top left corner
 	move.l a1,bltdpt(a5)	;destination top left corner
@@ -5384,27 +5471,27 @@ blit_plane_any_internal:
 ; trashes: D0-D1
 
 blit_4_planes
-    movem.l d2-d6/a0-a1/a5,-(a7)
+    movem.l d2-d7/a0-a1/a5,-(a7)
     lea $DFF000,A5
-	move.l #-1,bltafwm(a5)	;no masking of first/last word    
     lea     screen_data,a1
-    moveq.l #3,d6
+    moveq.l #3,d7
 .loop
     movem.l d0-d1/a1,-(a7)
     move.w  #4,d2       ; 16 pixels + 2 shift bytes
-    move.w  #16,d3      ; height
+    moveq.l #-1,d3
+    move.w  #16,d4      ; height
     bsr blit_plane_any_internal
     movem.l (a7)+,d0-d1/a1
     add.l   #SCREEN_PLANE_SIZE,a1
     add.l   #64,a0      ; 32 but shifting!
-    dbf d6,.loop
-    movem.l (a7)+,d2-d6/a0-a1/a5
+    dbf d7,.loop
+    movem.l (a7)+,d2-d7/a0-a1/a5
     rts
     
 wait_blit
 	TST.B	$BFE001
 .wait
-	BTST	#6,dmaconr+$DFF000
+	BTST	#6,dmaconr+_custom
 	BNE.S	.wait
 	rts
 
@@ -5761,12 +5848,15 @@ graphicsname:   dc.b "graphics.library",0
 dosname
         dc.b    "dos.library",0
             even
+
     include ReadJoyPad.s
     ; variables
 gfxbase_copperlist
     dc.l    0
     
 previous_random
+    dc.l    0
+previous_joystick_state
     dc.l    0
 joystick_state
     dc.l    0
@@ -5777,7 +5867,7 @@ record_data_pointer
 record_input_clock
     dc.w    0    
     IFD    RECORD_INPUT_TABLE_SIZE
-previous_joystick_state
+prev_record_joystick_state
     dc.l    0
 
     ENDC    
@@ -5855,6 +5945,12 @@ ghost_release_override_timer:
 maze_blink_nb_times
     dc.b    0
 nb_lives:
+    dc.b    0
+music_playing:
+    dc.b    0
+loop_playing:
+    dc.b    0
+pause_flag
     dc.b    0
 quit_flag
     dc.b    0
@@ -6327,10 +6423,10 @@ play_music
     sub.l   a1,a1
     bsr _mt_init
     ; set master volume a little less loud
-    lea MasterVolTab30,a0
-    lea mt_data,a4
-    move.l  a0,mt_MasterVolTab(a4)
+    move.w  #12,d0
+    bsr _mt_mastervol
     bsr _mt_start
+    st.b    music_playing
     movem.l (a7)+,d0-a6
     rts
     
@@ -6362,20 +6458,14 @@ update_extra_life_sound_loop:
     rts
 
 start_background_loop
-    lea _custom,a6
     move.w  loop_index(pc),d0
     add.w   d0,d0
     add.w   d0,d0
     lea     loop_table(pc),a0
     move.l  (a0,d0.w),a0    ; current loop sound
-    bra _mt_loopfx
+    bra play_loop_fx
 
-
-stop_background_loop:
-    lea _custom,a6
-    clr.w   d0
-    bra _mt_stopfx
-    
+   
     
        
 ;base addr, len, per, vol, channel<<8 + pri, loop timer, number of repeats (or -1), current repeat, current vbl
@@ -6579,6 +6669,10 @@ pink_ghost:      ; needed by cyan ghost
 orange_ghost:        ; needed to unlock elroy mode
     ds.b    Ghost_SIZEOF
 
+
+keyboard_table:
+    ds.b    $100,0
+    
 ; BSS --------------------------------------
     SECTION  S2,BSS
 HWSPR_TAB_XPOS:	
@@ -6974,9 +7068,8 @@ loop_eyes_raw_end
     
 empty_sprite
     dc.l    0,0
-
 music
     incbin  "pacman_convert.mod"
-    
+
     
     	
