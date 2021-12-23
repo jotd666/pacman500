@@ -59,7 +59,7 @@ def process_tiles():
 
 
     # no need for 32 colors to dump bobs
-    bob_palette = game_palette[:16]
+    bob_palette = game_palette   #[:16]
 
     for object in tiles["objects"]:
         if object.get("ignore"):

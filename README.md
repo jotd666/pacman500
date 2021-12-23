@@ -21,8 +21,6 @@ MINOR ISSUES:
 
 - repack with 2.08 RN packer
 - demo mode broken!!
-- skip intermission with fire (remove esc): big pacman not cleared!!)
-- from floppy: wait until drive is off
 - from floppy: crashes when exiting
 
 CREDITS:

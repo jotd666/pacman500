@@ -282,6 +282,8 @@ Start:
     ;move.l  a0,a2
     ;lea	_tags(pc),a0
     ;jsr	resload_Control(a2)
+    bsr load_highscores
+    
     bra.b   .startup
 .standard
     ; open dos library, graphics library
@@ -295,8 +297,22 @@ Start:
     jsr _LVOOpenLibrary(a6)
     move.l  d0,_gfxbase
     
-.startup
     bsr load_highscores
+    
+    move.l  _dosbase(pc),a6
+    move.l   #floppy_file,d1
+    move.l  #MODE_OLDFILE,d2
+    jsr     _LVOOpen(a6)
+    move.l  d0,d1
+    beq.b   .startup
+    
+    ; "floppy" file found
+    jsr     _LVOClose(a6)
+    ; wait 2 seconds for floppy drive to switch off
+    move.l  #100,d1
+    jsr     _LVODelay(a6)
+    
+.startup
     lea  _custom,a5
     move.b  #0,controller_joypad_1
     
@@ -495,7 +511,7 @@ intro:
     bne.b   .out_intermission
     tst.b   quit_flag
     bne.b   .out
-    move.w  joystick_state(pc),d0
+    move.l  joystick_state(pc),d0
     btst    #JPB_BTN_RED,d0
     bne.b   .out_intermission
     bra.b   .intermission_loop   
@@ -1808,7 +1824,8 @@ PLAYER_ONE_Y = 102-14
     rts
 
 stop_loop_fx:
-    ; stop loop
+    ; stop loop, not really required with the new ptplayer
+    ; version though
     tst.b   loop_playing
     beq.b   .no_loop
     clr.b   loop_playing
@@ -1818,7 +1835,6 @@ stop_loop_fx:
     rts
 stop_sounds
     bsr stop_loop_fx
-    clr.b   music_playing
     lea _custom,a6
     bra _mt_end
 
@@ -2364,6 +2380,13 @@ draw_bonus:
     rts
     
 draw_maze:    
+    lea screen_data+SCREEN_PLANE_SIZE,a1
+    bsr clear_playfield_plane
+    add.w   #SCREEN_PLANE_SIZE,a1
+    bsr clear_playfield_plane
+    add.w   #SCREEN_PLANE_SIZE,a1
+    bsr clear_playfield_plane
+
     lea screen_data,a1
 draw_maze_plane:
     ; copy maze data in bitplanes
@@ -2377,8 +2400,24 @@ draw_maze_plane:
     add.l  #12,a1
     ; init planes in copperlist (after colors)
     dbf d0,.copyline
+    
+
     rts    
 
+; < A1: plane start
+clear_playfield_plane
+    movem.l d0-d1/a0-a1,-(a7)
+    move.w #NB_LINES-1,d0
+.cp
+    move.w  #NB_BYTES_PER_MAZE_LINE/4-1,d1
+    move.l  a1,a0
+.cl
+    clr.l   (a0)+
+    dbf d1,.cl
+    add.l   #NB_BYTES_PER_LINE,a1
+    dbf d0,.cp
+    movem.l (a7)+,d0-d1/a0-a1
+    rts
 ; debug function
 draw_bounds
     lea wall_table,a0
@@ -2662,6 +2701,8 @@ level2_interrupt:
     
     cmp.b   #$45,d0
     bne.b   .no_esc
+    cmp.w   #STATE_INTERMISSION_SCREEN,current_state
+    beq.b   .no_esc
     cmp.w   #STATE_INTRO_SCREEN,current_state
     beq.b   .no_esc
     cmp.w   #STATE_GAME_START_SCREEN,current_state
@@ -6672,6 +6713,10 @@ orange_ghost:        ; needed to unlock elroy mode
 
 keyboard_table:
     ds.b    $100,0
+    
+floppy_file
+    dc.b    "floppy",0
+    even
     
 ; BSS --------------------------------------
     SECTION  S2,BSS
