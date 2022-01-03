@@ -19,7 +19,7 @@ FEATURES:
 
 MINOR ISSUES:
 
-- from floppy: crashes when exiting
+- from floppy: crashes when exiting (not confirmed)
 
 CREDITS:
 

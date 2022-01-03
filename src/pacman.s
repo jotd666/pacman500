@@ -1834,6 +1834,7 @@ stop_loop_fx:
 .no_loop
     rts
 stop_sounds
+	clr.b	music_playing		; indicates to pause test flag that music isn't playing
     bsr stop_loop_fx
     lea _custom,a6
     bra _mt_end
@@ -2860,7 +2861,7 @@ level3_interrupt:
     tst.b   demo_mode
     bne.b   .no_second
     tst.b   music_playing
-    bne.b   .no_pause
+    bne.b   .no_second
     
     eor.b   #1,pause_flag
 .no_second
