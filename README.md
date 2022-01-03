@@ -19,15 +19,13 @@ FEATURES:
 
 MINOR ISSUES:
 
-- repack with 2.08 RN packer
-- demo mode broken!!
 - from floppy: crashes when exiting
 
 CREDITS:
 
-- jotd: code and gfx/sfx conversion
-- no9: music conversion to protracker
-- phx: sfx/module player
+- Jean-Francois Fabre (aka jotd): code and gfx/sfx conversion
+- Andrzej Dobrowolski (aka no9): music conversion
+- Frank Wille (aka phx): sfx/module player
 - meynaf: random routine
 - eab forum: useful advice & support
 - namco: original game :)
@@ -40,6 +38,7 @@ Prerequesites:
 - python
 - sox
 - vasm 68k
+- gnu make
 
 (besides the .bin files created from png by python, the rest of the process could be built on an amiga with phxass
  or some other assembler and sox for the amiga, but you have to be really mad to attempt it in 2021...)

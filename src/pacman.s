@@ -1167,7 +1167,7 @@ init_player
     ; when bonus was active
     bsr remove_bonus
     bsr remove_bonus_score
-    
+	
     lea player(pc),a0
     move.l  #'PACM',character_id(a0)
     ; added +1 to be 100% exact vs original positionning
@@ -2936,6 +2936,7 @@ update_all
     rts  ; bra update_power_pill_flashing
 
 .level_completed
+	bsr		clear_bonus
     subq.w  #1,maze_blink_timer
     bne.b   .no_change
     move.w  #MAZE_BLINK_TIME,maze_blink_timer
@@ -4544,7 +4545,10 @@ resume_sound_loop:
 play_loop_fx
     tst.b   demo_mode
     bne.b   .demo
-    bsr stop_loop_fx
+	; stopping loop fx just before playing makes
+	; some loops fail. Better not do it, now that ptplayer
+	; has been fixed
+    ;;bsr stop_loop_fx
     st.b    loop_playing
     lea _custom,a6
     bra _mt_loopfx
@@ -4623,6 +4627,7 @@ update_pac
 .zz
     ; d5 is the timer starting from 0
     lea player_kill_anim_table(pc),a0
+	clr.w	d0		; forgot to clear that => nasty gfx bug
     move.b  (a0,d5.w),d0
 .frame_done
     lsl.w   #6,d0   ; times 64
@@ -5167,7 +5172,7 @@ draw_pacman:
     tst.w  player_killed_timer
     bmi.b   .normal
     lea     pac_dead,a0
-    move.w  death_frame_offset(pc),d0
+    move.w  death_frame_offset(pc),d0	
     add.w   d0,a0       ; proper frame to blit
     bra.b   .pacblit
 
@@ -6077,9 +6082,6 @@ player_kill_anim_table:
     REPT    NB_TICKS_PER_SEC
     dc.b    12
     ENDR
-    even
-    
-    even
 
     
 

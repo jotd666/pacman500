@@ -13,6 +13,7 @@ nb_duplicates = 2
 extra_margin = 0
 
 for wav_file in wav_files:
+    print("processing {}...".format(wav_file))
     raw_file = os.path.join(outdir,os.path.splitext(os.path.basename(wav_file))[0]+".raw")
     def get_sox_cmd(sr,output):
         return [sox,"--volume","1.0",wav_file,"--channels","1","--bits","8","-r",str(sr),"--encoding","signed-integer",output]
@@ -25,6 +26,8 @@ for wav_file in wav_files:
     # pre-pad with 0W, used by ptplayer for idling
     if contents[0] != b'\x00' and contents[1] != b'\x00':
         # add zeroes
+        print("padding with zeroes {}...".format(raw_file))
+        os.remove(raw_file)
         with open(raw_file,"wb") as f:
            f.write(struct.pack(">H",0))
            f.write(contents)

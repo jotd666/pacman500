@@ -1,0 +1,7 @@
+.key nope
+
+propack p a pacman
+copy pacman.RNC DF0:pacman
+copy README.md df0:
+delete df0:pacman.high
+
