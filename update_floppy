@@ -1,7 +1,21 @@
 .key nope
+set game pacman
+;propack p a $game
+copy $game.RNC DF0:$game
+protect DF0:$game RWED
+copy readme.md df0:
 
-propack p a pacman
-copy pacman.RNC DF0:pacman
-copy README.md df0:
-delete df0:pacman.high
+;delete $game.rnc
+if exists df0:$game.high
+   delete df0:$game.high
+endif
+
+set arc ${game}_HD.lha
+if exists ${arc}
+    echo deleting ${arc}...
+    delete ${arc}
+endif
+
+; also archive with lha
+lha a -r $arc ${game}_HD
 
