@@ -296,6 +296,7 @@ Start:
     moveq.l #0,d0
     jsr _LVOOpenLibrary(a6)
     move.l  d0,_gfxbase
+    move.l	d0,a6
     
     bsr load_highscores
     
@@ -327,7 +328,8 @@ Start:
     bne.b   .no_forbid
     move.l  _gfxbase(pc),a4
     move.l StartList(a4),gfxbase_copperlist
-
+	move.l	36(a4),old_actiview		; gb_ActiView
+	
     move.l  4,a6
     jsr _LVOForbid(a6)
 	sub.l	A1,A1
@@ -335,13 +337,13 @@ Start:
 	move.l	D0,A0
 	move.l	#-1,pr_WindowPtr(A0)	; no more system requesters (insert volume, write protected...)
     
-.no_forbid
     
-;    sub.l   a1,a1
-;    move.l  a4,a6
-;    jsr (_LVOLoadView,a6)
-;    jsr (_LVOWaitTOF,a6)
-;    jsr (_LVOWaitTOF,a6)
+    sub.l   a1,a1
+    move.l  a4,a6
+    jsr (_LVOLoadView,a6)
+    jsr (_LVOWaitTOF,a6)
+    jsr (_LVOWaitTOF,a6)
+.no_forbid
 
     move.w  #STATE_INTRO_SCREEN,current_state
     
@@ -620,19 +622,20 @@ intro:
 	rts
     
 .normal_end
+    bsr     finalize_sound
     bsr     restore_interrupts
     bsr     wait_blit
-    bsr     finalize_sound
 	; restart CDTV device
     move.l  #CMD_START,d0
     bsr send_cdtv_command
     bsr     save_highscores
 
     lea _custom,a5
-    move.l  _gfxbase,a1
-    move.l  gfxbase_copperlist,StartList(a1) ; adresse du début de la liste
     move.l  gfxbase_copperlist,cop1lc(a5) ; adresse du début de la liste
-    clr.w  copjmp1(a5)
+    move.l  _gfxbase,a6
+	move.l	old_actiview,a1
+	jsr	_LVOLoadView(a6)
+
     ;;move.w #$8060,dmacon(a5)        ; réinitialisation du canal DMA
     
     move.l  4.W,A6
@@ -2592,8 +2595,8 @@ init_interrupts
     lea _custom,a6
     sub.l   a0,a0
 
-    move.w  (dmaconr,a6),saved_dmacon
-    move.w  (intenar,a6),saved_intena
+    move.w  (dmaconr,a6),old_dmacon
+    move.w  (intenar,a6),old_intena
 
     sub.l   a0,a0
     ; assuming VBR at 0
@@ -2656,14 +2659,22 @@ restore_interrupts:
     move.l  (a1)+,($6C,a0)
 
 
-    lea _custom,a6
+	lea	_custom,a6
+	move.w	old_intena,d0			; get old val
+	and.w	#$3fff,d0
+	eor.w	#$3fff,d0
+	move.w	d0,intena(a6)		; clr bits
+	eor.w	#$3fff,d0
+	or.w	#$c000,d0		
+	move.w	d0,intena(a6)		; set bits and main
 
-    move.w  saved_dmacon,d0
-    bset    #15,d0
-    move.w  d0,(dmacon,a6)
-    move.w  saved_intena,d0
-    bset    #15,d0
-    move.w  d0,(intena,a6)
+	move.w	old_dmacon,d0			; get old val
+	and.w	#$3fff,d0
+	eor.w	#$3fff,d0
+
+
+	move.w	d0,dmacon(a6)		; clr bits
+
 
 
     rts
@@ -2673,9 +2684,9 @@ saved_vectors
         dc.l    0   ; keyboard
         dc.l    0   ; vblank
         dc.l    0   ; cia b
-saved_dmacon
+old_dmacon
     dc.w    0
-saved_intena
+old_intena
     dc.w    0
 
 ; what: level 2 interrupt (keyboard)
@@ -4753,7 +4764,7 @@ update_pac
     beq.b   .no_down
     move.w  #1,v_speed(a4)
 .no_down    
-.out
+.out:
     ; cache xy in regs / save them
     move.w  xpos(a4),d2
     move.w  ypos(a4),d3
@@ -6120,6 +6131,10 @@ elroy_threshold_2
     dc.b    0
     even
 
+
+old_actiview:
+	dc.l	0
+	
 bonus_display_message:
     dc.w    0
 bonus_score_display_message:
