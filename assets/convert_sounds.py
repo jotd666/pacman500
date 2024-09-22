@@ -16,7 +16,7 @@ for wav_file in wav_files:
     print("processing {}...".format(wav_file))
     raw_file = os.path.join(outdir,os.path.splitext(os.path.basename(wav_file))[0]+".raw")
     def get_sox_cmd(sr,output):
-        return [sox,"--volume","1.0",wav_file,"--channels","1","--bits","8","-r",str(sr),"--encoding","signed-integer",output]
+        return [sox,"--volume","1.0",wav_file,"--channels","1","-D","--bits","8","-r",str(sr),"--encoding","signed-integer",output]
     cmd = get_sox_cmd(sampling_rate,raw_file)
 
     subprocess.check_call(cmd)

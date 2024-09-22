@@ -28,7 +28,7 @@ game_palette_txt = """
 
 
 game_palette = bitplanelib.palette_dcw2palette(game_palette_txt)
-bitplanelib.palette_dump(game_palette,r"../src/palette.s",as_copperlist=False)
+bitplanelib.palette_dump(game_palette,r"../src/palette.s")
 
 outdir = "dumps"
 
