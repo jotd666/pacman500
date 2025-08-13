@@ -30,6 +30,10 @@ CREDITS:
 - eab forum: useful advice & support
 - namco: original game :)
 
+Someone recreated Pacman in C too:
+
+https://pacmanc.blogspot.com/2024/05/movement-patterns.html
+
 BUILDING FROM SOURCES:
 
 Prerequesites:
