@@ -1,7 +1,11 @@
-import os,bitplanelib,json
+import os,bitplanelib,json,pathlib
 from PIL import Image
+this_dir = pathlib.Path(__file__).parent.absolute()
 
 sprites_dir = "sprites"
+
+sd = this_dir / ".." / sprites_dir
+sd.mkdir(exist_ok=True)
 maze_palette_txt = "  dc.w  $0000,$021f"        # almost same blue as in game palette, same order
 maze_palette = bitplanelib.palette_dcw2palette(maze_palette_txt)
 maze = Image.open("maze.png")

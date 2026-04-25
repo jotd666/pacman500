@@ -1,12 +1,15 @@
-import subprocess,os,struct
+import subprocess,os,struct,pathlib
 
-sox = r"k:\progs\sox-14-4-2\sox.exe"
+sox = r"sox.exe"
+
+this_dir = pathlib.Path(__file__).parent.absolute()
 
 wav_files = ["pacman_killed.wav","credit.wav","eat_1.wav","eat_2.wav",
 "extra_life.wav","ghost_eaten.wav","bonus_eaten.wav","loop_1.wav","loop_2.wav",
 "loop_3.wav","loop_4.wav","loop_5.wav","loop_fright.wav",
 "loop_eyes.wav"]
-outdir = "../sounds"
+outdir = this_dir / "../sounds"
+outdir.mkdir(exist_ok=True)
 
 sampling_rate = 22050
 nb_duplicates = 2
